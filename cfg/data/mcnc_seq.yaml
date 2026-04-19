@@ -1,0 +1,46 @@
+path: $HOME/workspace/circ/repos/hdl-benchmarks/mcnc/Sequential/Blif
+format: blif
+files:
+  - ex4
+  - beecount
+  - bbsse
+  - dk14
+  - shiftreg
+  - train4
+  - kirkman
+  - tbk
+  - dk15
+  - s1a
+  - modulo12
+  - tav
+  - train11
+  - styr
+  - ex5
+  - cse
+  - mc
+  - lion
+  - keyb
+  - a
+  - ex1
+  - opus
+  - dk17
+  - lion9
+  - sand
+  - planet1
+  - planet
+  - ex7
+  - donfile
+  - s8
+  - bbara
+  - ex3
+  - ex6
+  - sse
+  - ex2
+  - dk512
+  - dk16
+  - bbtas
+  - dk27
+  - scf
+  - s1
+  - mark1
+  

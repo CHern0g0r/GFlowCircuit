@@ -1,0 +1,13 @@
+path: $HOME/workspace/circ/repos/EPFL_benchmarks/arithmetic
+format: aig
+files:
+  - multiplier
+  - div
+  - bar
+  # - hyp
+  - square
+  - log2
+  - max
+  - adder
+  - sin
+  - sqrt

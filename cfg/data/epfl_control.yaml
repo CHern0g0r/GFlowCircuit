@@ -1,0 +1,13 @@
+path: $HOME/workspace/circ/repos/EPFL_benchmarks/random_control
+format: aig
+files:
+  - mem_ctrl
+  - int2float
+  - cavlc
+  - voter
+  - priority
+  - arbiter
+  - i2c
+  - ctrl
+  - dec
+  - router
