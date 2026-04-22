@@ -1,5 +1,5 @@
-path: $HOME/workspace/circ/repos/hdl-benchmarks/mcnc/Combinational/blif
-format: aig
+path: data/hdl-benchmarks/mcnc/Combinational/blif
+format: blif
 files:
   - lin
   - xparc

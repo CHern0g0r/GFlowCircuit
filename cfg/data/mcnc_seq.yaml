@@ -1,4 +1,4 @@
-path: $HOME/workspace/circ/repos/hdl-benchmarks/mcnc/Sequential/Blif
+path: data/hdl-benchmarks/mcnc/Sequential/Blif
 format: blif
 files:
   - ex4

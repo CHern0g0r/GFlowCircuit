@@ -1,0 +1,36 @@
+defaults:
+  - default
+  - algorithm: gflownet_tb
+  - override encoder: gcn
+  - _self_
+
+run_name: gflownet_tb_mcnc
+dataset_cfg: cfg/data/mcnc_seq.yaml
+
+policy:
+  type: reinforce
+
+encoder:
+  num_layers: 4
+  pooling: mean
+
+head:
+  type: mlp
+  hidden_dims: [128, 64]
+
+reward:
+  type: zhu_size
+
+num_steps: 10
+episodes: 200
+eval_every: 20
+train_ratio: 0.75
+seed: 0
+learning_rate: 0.01
+
+paper_mode:
+  per_circuit_mode: false
+  num_runs: 1
+  infer_rollouts: 4
+
+json_out: ${output_dir}/gflownet_tb_report.json

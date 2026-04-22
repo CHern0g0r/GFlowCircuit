@@ -3,15 +3,9 @@ openspiel_path="$HOME/workspace/iwls/open_spiel"
 export PYTHONPATH=$PYTHONPATH:$openspiel_path
 export PYTHONPATH=$PYTHONPATH:$openspiel_path/build/python
 
-base_name="mcnc"
+base_name="gflownet_tb"
 run_name="${base_name}-$(date +%m%d_%H%M%S)"
 
-
-#   python -m src.run episodes=500 run_name=my_exp
-#   python -m src.run run_name="mcnc_seq-$(date +%m%d_%H%M%S)"
-
-export GFC_TIMING=1
-
-python -m src.run \
-  --config-name zhu2020_size_mcnc \
+python -m src.run_gflownet_tb \
+  --config-name gflownet_tb_mcnc \
   run_name=$run_name

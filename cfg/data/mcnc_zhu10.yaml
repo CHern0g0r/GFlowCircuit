@@ -1,0 +1,13 @@
+path: data/hdl-benchmarks/mcnc/Combinational/blif
+format: blif
+files:
+  - i10
+  - C1355
+  - C7552
+  - C6288
+  # - C5315
+  # - dalu
+  # - k2
+  # - mainpla
+  # - apex1
+  # - bc0

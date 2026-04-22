@@ -1,0 +1,7 @@
+# Core training stack (install as needed)
+torch
+torch-geometric
+numpy
+pyyaml
+hydra-core>=1.3
+omegaconf

@@ -1,0 +1,6 @@
+# Algorithm-specific knobs for Trajectory Balance GFlowNet.
+tb:
+  trajectories_per_episode: 4
+  reward_alpha: 4.0
+  reward_eps: 1.0e-8
+  reward_improvement_clip: 2.0

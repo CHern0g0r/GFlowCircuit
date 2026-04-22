@@ -1,0 +1,72 @@
+# Default experiment config (aligned with scr/run.sh).
+# Run from repo root, e.g.:
+#   python -m src.run
+#   python -m src.run run_name=my_exp episodes=500
+#   python -m src.run run_name="mcnc_seq-$(date +%m%d_%H%M%S)"  # shell expands before Hydra
+
+defaults:
+  - encoder: id
+  - _self_
+
+run_name: mcnc
+
+# Store all artifacts in Hydra's run directory.
+output_dir: ${hydra:runtime.output_dir}
+
+# Model / policy (see src.models ENCODERS, HEADS, POLICY_TYPES)
+policy:
+  type: reinforce
+head:
+  type: linear
+value:
+  type: mlp
+  hidden_dims: [32, 32]
+
+# Reward (see src.models REWARD_TYPES)
+reward:
+  type: product_of_diff
+
+# Training
+num_steps: 10
+episodes: 200
+eval_every: 20
+train_ratio: 0.75
+seed: 0
+learning_rate: 0.001
+policy_learning_rate: null
+value_learning_rate: null
+gamma: 1.0
+baseline_alpha: 0.05
+
+# Dataset manifest (path relative to original cwd — Hydra resolves it)
+dataset_cfg: cfg/data/mcnc_seq.yaml
+
+# REINFORCE objective
+terminal_reward: true
+
+# Optional: null or resyn2
+baseline: resyn2
+baseline_scale: 1.0
+
+entropy_beta: 0.0
+clip_grad_norm_policy: null
+clip_grad_norm_value: null
+normalize_returns: false
+
+paper_mode:
+  per_circuit_mode: false
+  num_runs: 1
+  infer_rollouts: 1
+
+logging:
+  tensorboard: true
+
+# Written after training; interpolated from fields above
+json_out: ${output_dir}/reinforce_report.json
+
+# Keep project working directory so paths like cfg/data/... resolve from repo root
+hydra:
+  run:
+    dir: outputs/${now:%Y-%m-%d}/${now:%H:%M}_${run_name}
+  job:
+    chdir: false

@@ -1,4 +1,4 @@
-path: $HOME/workspace/circ/repos/EPFL_benchmarks/arithmetic
+path: data/EPFL_benchmarks/arithmetic
 format: aig
 files:
   - multiplier

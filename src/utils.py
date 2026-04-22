@@ -2,10 +2,12 @@ import numpy as np
 import torch
 import yaml
 import pyspiel
+import time
 
 from pathlib import Path
 from torch_geometric.data import Data
 from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -15,15 +17,32 @@ class Observation:
     legal_actions: list[int]
 
     @classmethod
-    def from_state(cls, state: pyspiel.State) -> "Observation":
+    def from_state(
+        cls,
+        state: pyspiel.State,
+        timing: dict[str, Any] | None = None,
+    ) -> "Observation":
+        t0 = time.perf_counter()
+        t_obs = time.perf_counter()
         obs_tensor = torch.as_tensor(state.observation_tensor(0), dtype=torch.float32)
+        t_graph = time.perf_counter()
         x, e, ea = pyspiel.circuit_graph(state)
+        t_tensor = time.perf_counter()
         graph = Data(
             x=torch.as_tensor(x),
             edge_index=torch.as_tensor(e).T,
             edge_attr=torch.as_tensor(ea)
         )
+        t_legal = time.perf_counter()
         legal_actions = list(state.legal_actions())
+        t1 = time.perf_counter()
+        if timing is not None:
+            timing["obs_from_state_calls"] = timing.get("obs_from_state_calls", 0) + 1
+            timing["obs_from_state_total_s"] = timing.get("obs_from_state_total_s", 0.0) + (t1 - t0)
+            timing["obs_tensor_s"] = timing.get("obs_tensor_s", 0.0) + (t_graph - t_obs)
+            timing["circuit_graph_s"] = timing.get("circuit_graph_s", 0.0) + (t_tensor - t_graph)
+            timing["tensor_wrap_s"] = timing.get("tensor_wrap_s", 0.0) + (t_legal - t_tensor)
+            timing["legal_actions_s"] = timing.get("legal_actions_s", 0.0) + (t1 - t_legal)
         return cls(obs_tensor, graph, legal_actions)
 
 
@@ -61,6 +80,7 @@ def load_circuits(dataset_cfg: Path) -> list[str]:
     circuits = []
     for name in names:
         p = root / f"{name}.{fmt}"
+        print(p.absolute())
         if p.exists():
             circuits.append(str(p))
         else:

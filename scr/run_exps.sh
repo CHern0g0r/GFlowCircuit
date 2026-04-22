@@ -1,0 +1,7 @@
+# sbatch sbatch_gflownet_tb_baseline.sh
+sbatch sbatch_gflownet_tb_reward_sweep.sh
+sbatch sbatch_gflownet_tb_traj_sweep.sh
+sbatch sbatch_gflownet_tb_lr_sweep.sh
+# sbatch sbatch_gflownet_tb_infer_rollouts_sweep.sh
+# sbatch sbatch_gflownet_tb_combo_ab.sh
+# sbatch sbatch_gflownet_tb_combo_abc.sh

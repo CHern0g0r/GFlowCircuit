@@ -1,0 +1,42 @@
+defaults:
+  - default
+  - override encoder: gcn
+  - _self_
+
+run_name: zhu2020_size_mcnc
+dataset_cfg: cfg/data/mcnc_zhu10.yaml
+
+policy:
+  type: reinforce
+encoder:
+  num_layers: 4
+  pooling: mean
+head:
+  type: mlp
+  hidden_dims: [128, 64]
+value:
+  type: mlp
+  hidden_dims: [32, 32]
+
+reward:
+  type: zhu_size
+
+num_steps: 20
+episodes: 200
+eval_every: 50
+terminal_reward: false
+
+gamma: 0.9
+policy_learning_rate: 8e-4
+value_learning_rate: 3e-3
+baseline: zhu_resyn2
+baseline_scale: 1.0
+entropy_beta: 1e-3
+clip_grad_norm_policy: 1.0
+clip_grad_norm_value: 1.0
+normalize_returns: true
+
+paper_mode:
+  per_circuit_mode: true
+  num_runs: 10
+  infer_rollouts: 10
