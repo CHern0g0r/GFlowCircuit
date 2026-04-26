@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import torch
+
 from src.utils import Observation
 
 
@@ -10,7 +12,7 @@ class TBStep:
     observation: Observation
     action: int
     legal_actions: list[int]
-    log_pf: float
+    log_pf: torch.Tensor
 
 
 @dataclass
@@ -23,7 +25,7 @@ class TBTrajectory:
     final_depth: int
     final_return: float
     td_final_return: float
-    log_pf_sum: float
-    log_pb_sum: float
+    log_pf_sum: torch.Tensor
+    log_pb_sum: torch.Tensor
     log_reward: float
     terminal_reward: float

@@ -70,8 +70,8 @@ class TBGFlowNetTrainer:
                 trajectories.append(tr)
 
             optimizer.zero_grad(set_to_none=True)
-            log_pf = torch.tensor([t.log_pf_sum for t in trajectories], dtype=torch.float32, device=self.device)
-            log_pb = torch.tensor([t.log_pb_sum for t in trajectories], dtype=torch.float32, device=self.device)
+            log_pf = torch.stack([t.log_pf_sum for t in trajectories])
+            log_pb = torch.stack([t.log_pb_sum for t in trajectories])
             log_r = torch.tensor([t.log_reward for t in trajectories], dtype=torch.float32, device=self.device)
             loss = trajectory_balance_loss(
                 log_z=self.policy.log_z,

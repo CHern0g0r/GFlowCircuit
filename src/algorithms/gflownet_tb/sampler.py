@@ -66,7 +66,7 @@ def sample_tb_trajectory(
                 observation=obs,
                 action=action,
                 legal_actions=legal_actions,
-                log_pf=float(log_pf.detach().item()),
+                log_pf=log_pf,
             )
         )
 
@@ -87,10 +87,9 @@ def sample_tb_trajectory(
     log_reward = float(math.log(terminal_reward))
 
     if log_pf_terms:
-        log_pf_sum_t = torch.stack(log_pf_terms).sum()
-        log_pf_sum = float(log_pf_sum_t.detach().item())
+        log_pf_sum = torch.stack(log_pf_terms).sum()
     else:
-        log_pf_sum = 0.0
+        log_pf_sum = torch.zeros((), dtype=torch.float32, device=policy.log_z.device)
 
     return TBTrajectory(
         file_path=file_path,
@@ -102,7 +101,7 @@ def sample_tb_trajectory(
         final_return=float(total_reward),
         td_final_return=td_final_return,
         log_pf_sum=log_pf_sum,
-        log_pb_sum=0.0,
+        log_pb_sum=torch.zeros_like(log_pf_sum),
         log_reward=log_reward,
         terminal_reward=terminal_reward,
     )
