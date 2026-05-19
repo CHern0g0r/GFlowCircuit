@@ -5,7 +5,7 @@ defaults:
   - _self_
 
 run_name: gflownet_tb_mcnc
-dataset_cfg: cfg/data/mcnc_seq.yaml
+dataset_cfg: cfg/data/mcnc_zhu10.yaml
 
 policy:
   type: reinforce
@@ -21,16 +21,16 @@ head:
 reward:
   type: zhu_size
 
-num_steps: 10
+num_steps: 20
 episodes: 200
-eval_every: 20
+eval_every: 50
 train_ratio: 0.75
 seed: 0
-learning_rate: 0.01
+learning_rate: 0.001
 
 paper_mode:
-  per_circuit_mode: false
-  num_runs: 1
+  per_circuit_mode: true
+  num_runs: 10
   infer_rollouts: 4
 
 json_out: ${output_dir}/gflownet_tb_report.json

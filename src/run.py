@@ -24,6 +24,28 @@ from src.train.utils import get_obs_dim_and_num_actions, build_resyn2_cache
 from src.train import Trainer
 
 
+def _save_run_checkpoint(
+    *,
+    output_dir: Path,
+    run_idx: int,
+    seed: int,
+    policy: torch.nn.Module,
+    value_net: torch.nn.Module | None,
+) -> Path:
+    run_dir = output_dir / "saved_models" / f"run_{run_idx}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_path = run_dir / "last.pt"
+    payload: dict[str, object] = {
+        "run_idx": int(run_idx),
+        "seed": int(seed),
+        "policy_state_dict": policy.state_dict(),
+    }
+    if value_net is not None:
+        payload["value_state_dict"] = value_net.state_dict()
+    torch.save(payload, ckpt_path)
+    return ckpt_path
+
+
 def _build_models(cfg: DictConfig, obs_dim: int, node_dim: int, num_actions: int):
     encoder_cfg = OmegaConf.to_container(cfg.encoder, resolve=True)
     if not isinstance(encoder_cfg, dict):
@@ -108,6 +130,7 @@ def main(cfg: DictConfig) -> None:
     for run_idx in range(num_runs):
         print("Starting run", run_idx)
         policy, value_net = _build_models(cfg, obs_dim=obs_dim, node_dim=node_dim, num_actions=num_actions)
+        run_seed = int(cfg.seed + run_idx)
         trainer = Trainer(
             train_circuits=train_circuits,
             test_circuits=test_circuits,
@@ -118,7 +141,7 @@ def main(cfg: DictConfig) -> None:
             baseline=baseline,
             resyn2_baselines=resyn2_baselines,
             device=device,
-            seed=int(cfg.seed + run_idx),
+            seed=run_seed,
             log_dir=(tb_log_dir / f"run_{run_idx}") if tb_log_dir is not None else None,
         )
 
@@ -138,12 +161,21 @@ def main(cfg: DictConfig) -> None:
         )
 
         final_eval = trainer.evaluate(num_steps=int(cfg.num_steps), best_of_rollouts=best_of_rollouts)
+        ckpt_path = _save_run_checkpoint(
+            output_dir=output_dir,
+            run_idx=run_idx,
+            seed=run_seed,
+            policy=policy,
+            value_net=value_net,
+        )
+        print(f"Saved checkpoint: {ckpt_path}")
         runs.append(
             {
                 "run_idx": run_idx,
-                "seed": int(cfg.seed + run_idx),
+                "seed": run_seed,
                 "history": train_out["history"],
                 "final_eval": final_eval,
+                "checkpoint_path": str(ckpt_path),
             }
         )
 
