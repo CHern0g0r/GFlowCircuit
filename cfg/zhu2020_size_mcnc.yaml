@@ -1,5 +1,6 @@
 defaults:
   - default
+  - algorithm: reinforce
   - override encoder: gcn
   - _self_
 

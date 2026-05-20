@@ -46,12 +46,31 @@ class Observation:
         return cls(obs_tensor, graph, legal_actions)
 
 
+    def observation_to_device(self, device: torch.device) -> "Observation":
+        """Move observation tensors to ``device`` (OpenSpiel observations default to CPU)."""
+        if self.obs_tensor.device == device and self.graph.x.device == device:
+            return self
+        return Observation(
+            obs_tensor=self.obs_tensor.to(device, non_blocking=device.type == "cuda"),
+            graph=self.graph.to(device),
+            legal_actions=list(self.legal_actions),
+        )
+
+
 @dataclass
 class StepSample:
     observation: Observation
     action: int
     probs: torch.Tensor
     reward: float
+
+    def to(self, device: torch.device) -> "StepSample":
+        """Copy with observation (and probs if needed) moved to ``device`` for model forward passes."""
+        obs_dev = self.observation.observation_to_device(device)
+        probs = self.probs
+        if probs.device != device:
+            probs = probs.to(device)
+        return StepSample(observation=obs_dev, action=self.action, probs=probs, reward=self.reward)
 
 
 def train_test_split(items: list[str], train_ratio: float, seed: int) -> tuple[list[str], list[str]]:
@@ -92,7 +111,7 @@ def load_circuits(dataset_cfg: Path) -> list[str]:
 
 
 def discounted_returns(rewards: torch.Tensor, gamma: float = 1.0) -> torch.Tensor:
-    out = torch.zeros(len(rewards), dtype=rewards.dtype)
+    out = torch.zeros(len(rewards), dtype=rewards.dtype, device=rewards.device)
     g = torch.tensor(0.0, dtype=rewards.dtype, device=rewards.device)
     
     for i in range(len(rewards) - 1, -1, -1):

@@ -5,7 +5,7 @@ This repository currently supports two independent training pipelines:
 - `REINFORCE` (existing default path).
 - `GFlowNet-TB` (new Trajectory Balance path in parallel).
 
-## REINFORCE (unchanged)
+## Training (unified entrypoint)
 
 ```bash
 python -m src.run
@@ -17,10 +17,10 @@ or with the project script:
 bash scr/run.sh
 ```
 
-## GFlowNet-TB (parallel pipeline)
+To run GFlowNet-TB, switch the config:
 
 ```bash
-python -m src.run_gflownet_tb --config-name gflownet_tb_mcnc
+python -m src.run --config-name gflownet_tb_mcnc
 ```
 
 or with the project script:
@@ -35,7 +35,7 @@ Because each pipeline has its own entrypoint and report names (`reinforce_report
 
 ```bash
 python -m src.run --config-name zhu2020_size_mcnc run_name=reinforce_parallel
-python -m src.run_gflownet_tb --config-name gflownet_tb_mcnc run_name=tb_parallel
+python -m src.run --config-name gflownet_tb_mcnc run_name=tb_parallel
 ```
 
 Use different `run_name` values when launching multiple jobs to keep Hydra output directories distinct.
