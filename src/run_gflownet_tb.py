@@ -9,9 +9,9 @@ from hydra.utils import to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 
 from src.algorithms.gflownet_tb import TBGFlowNetPolicy, TBGFlowNetTrainer
+from src.baselines.resyn2 import build_resyn2_cache
 from src.models import REWARD_TYPES, encoder_factory, head_factory
-from src.train.utils import build_resyn2_cache, get_obs_dim_and_num_actions
-from src.utils import load_circuits, train_test_split
+from src.utils import get_obs_dim_and_num_actions, load_circuits, normalize_available_actions, train_test_split
 
 
 def _save_tb_run_checkpoint(
@@ -67,6 +67,7 @@ def main(cfg: DictConfig) -> None:
         train_circuits, test_circuits = train_test_split(circuits, cfg["train_ratio"], cfg["seed"])
 
     obs_dim, num_actions, node_dim, _ = get_obs_dim_and_num_actions(cfg["num_steps"], train_circuits[0])
+    available_actions = normalize_available_actions(OmegaConf.select(cfg, "available_actions"), num_actions)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     reward_class = REWARD_TYPES[cfg["reward"]["type"]]
     tb_enabled = bool(cfg["logging"]["tensorboard"])
@@ -101,6 +102,7 @@ def main(cfg: DictConfig) -> None:
             device=device,
             seed=run_seed,
             log_dir=(tb_root / f"run_{run_idx}") if tb_root is not None else None,
+            available_actions=available_actions,
         )
         train_out = trainer.train(
             episodes=int(cfg["episodes"]),
@@ -145,6 +147,7 @@ def main(cfg: DictConfig) -> None:
         "num_steps": int(cfg["num_steps"]),
         "episodes": int(cfg["episodes"]),
         "train_ratio": float(cfg["train_ratio"]),
+        "available_actions": available_actions,
         "tb": {
             "trajectories_per_episode": tb_trajectories_per_episode,
             "reward_alpha": tb_reward_alpha,

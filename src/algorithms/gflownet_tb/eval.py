@@ -19,6 +19,7 @@ def evaluate_tb(
     reward_eps: float,
     reward_improvement_clip: float,
     best_of_rollouts: int,
+    available_actions: list[int] | None = None,
 ) -> dict[str, Any]:
     per_circuit = []
     for circuit in circuits:
@@ -34,6 +35,7 @@ def evaluate_tb(
                     reward_eps=reward_eps,
                     reward_improvement_clip=reward_improvement_clip,
                     sample_actions=best_of_rollouts > 1,
+                    available_actions=available_actions,
                 )
             )
         best = max(candidates, key=lambda t: float(t.final_return))

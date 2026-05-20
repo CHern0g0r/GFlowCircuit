@@ -21,6 +21,7 @@ def run_reinforce_episode(
     sample_actions: bool,
     resyn2_baseline: dict[str, Any],
     baseline: str | None = None,
+    available_actions: list[int] | None = None,
 ) -> dict[str, Any]:
     timing_enabled = os.getenv("GFC_TIMING", "0") == "1"
     timing: dict[str, Any] = {}
@@ -30,7 +31,11 @@ def run_reinforce_episode(
     state = game.new_initial_state()
     trajectory: list[StepSample] = []
 
-    obs0 = Observation.from_state(state, timing=timing if timing_enabled else None)
+    obs0 = Observation.from_state(
+        state,
+        available_actions=available_actions,
+        timing=timing if timing_enabled else None,
+    )
     initial_size = int(obs0.obs_tensor[OBS_SIZE_IDX])
     initial_depth = int(obs0.obs_tensor[OBS_DEPTH_IDX])
 
@@ -48,7 +53,11 @@ def run_reinforce_episode(
     reward_raw_gain_sum = 0.0
 
     while not state.is_terminal():
-        obs = Observation.from_state(state, timing=timing if timing_enabled else None)
+        obs = Observation.from_state(
+            state,
+            available_actions=available_actions,
+            timing=timing if timing_enabled else None,
+        )
 
         t_policy_start = time.perf_counter()
         logits = policy(obs)
@@ -75,7 +84,11 @@ def run_reinforce_episode(
         if timing_enabled:
             timing["apply_action_s"] = timing.get("apply_action_s", 0.0) + (t_apply_end - t_apply_start)
 
-        next_obs = Observation.from_state(state, timing=timing if timing_enabled else None)
+        next_obs = Observation.from_state(
+            state,
+            available_actions=available_actions,
+            timing=timing if timing_enabled else None,
+        )
         sz = get_size(next_obs)
         dp = get_depth(next_obs)
 
@@ -96,7 +109,11 @@ def run_reinforce_episode(
             )
         )
 
-    final_obs = Observation.from_state(state, timing=timing if timing_enabled else None)
+    final_obs = Observation.from_state(
+        state,
+        available_actions=available_actions,
+        timing=timing if timing_enabled else None,
+    )
     total_reward = float(sum(step.reward for step in trajectory))
     trajectory_reward = float(reward_func(get_size(final_obs), get_depth(final_obs), initial_size, initial_depth))
 
@@ -157,4 +174,3 @@ def run_reinforce_episode(
         )
 
     return out
-

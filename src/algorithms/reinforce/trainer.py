@@ -11,7 +11,7 @@ from tqdm import tqdm, trange
 
 from src.algorithms.reinforce.episode import run_reinforce_episode
 from src.algorithms.reinforce.policy import Policy
-from src.train.metrics import TensorBoardLogger
+from src.metrics import TensorBoardLogger
 from src.utils import StepSample, discounted_returns
 
 
@@ -30,6 +30,7 @@ class ReinforceTrainer:
         seed: int,
         log_dir: Path | None = None,
         baseline: str | None = None,
+        available_actions: list[int] | None = None,
     ) -> None:
         self.policy = policy
         self.value_network = value_network
@@ -38,6 +39,7 @@ class ReinforceTrainer:
         self.train_circuits = train_circuits
         self.test_circuits = test_circuits
         self.baseline = baseline
+        self.available_actions = available_actions
         self.resyn2_baselines = resyn2_baselines
         self.device = device
         self.rng = np.random.default_rng(seed)
@@ -77,6 +79,7 @@ class ReinforceTrainer:
                 reward_class=self.reward_class,
                 resyn2_baseline=self.resyn2_baselines[circuit],
                 baseline=self.baseline,
+                available_actions=self.available_actions,
             )
 
             steps: list[StepSample] = episode["trajectory"]
@@ -236,6 +239,7 @@ class ReinforceTrainer:
                     reward_class=self.reward_class,
                     resyn2_baseline=self.resyn2_baselines[c],
                     baseline=self.baseline,
+                    available_actions=self.available_actions,
                 )
                 candidates.append(ep)
             ep = max(candidates, key=lambda r: float(r["final_return"]))
@@ -295,4 +299,3 @@ class ReinforceTrainer:
             "mean_resyn2_baseline_total_reward": mean_resyn2_baseline_total_reward,
             "mean_resyn2_baseline_final_step_reward": mean_resyn2_baseline_final_step_reward,
         }
-

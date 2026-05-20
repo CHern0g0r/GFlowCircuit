@@ -23,7 +23,6 @@ reward:
   type: zhu_size
 
 num_steps: 20
-available_actions: [0, 1, 2, 3, 4]
 episodes: 200
 eval_every: 50
 terminal_reward: false

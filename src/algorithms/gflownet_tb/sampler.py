@@ -8,7 +8,7 @@ from torch.distributions import Categorical
 
 from src.algorithms.gflownet_tb.policy import TBGFlowNetPolicy
 from src.algorithms.gflownet_tb.types import TBStep, TBTrajectory
-from src.train.utils import OBS_DEPTH_IDX, OBS_SIZE_IDX
+from src.baselines.resyn2 import OBS_DEPTH_IDX, OBS_SIZE_IDX
 from src.utils import Observation
 
 
@@ -22,11 +22,12 @@ def sample_tb_trajectory(
     reward_eps: float,
     reward_improvement_clip: float,
     sample_actions: bool,
+    available_actions: list[int] | None = None,
 ) -> TBTrajectory:
     game = pyspiel.load_game("circuit", {"num_steps": int(num_steps), "file_path": file_path})
     state = game.new_initial_state()
 
-    obs0 = Observation.from_state(state)
+    obs0 = Observation.from_state(state, available_actions=available_actions)
     initial_size = int(obs0.obs_tensor[OBS_SIZE_IDX])
     initial_depth = int(obs0.obs_tensor[OBS_DEPTH_IDX])
     reward_func = reward_class(initial_size, initial_depth)
@@ -36,7 +37,7 @@ def sample_tb_trajectory(
     total_reward = 0.0
 
     while not state.is_terminal():
-        obs = Observation.from_state(state)
+        obs = Observation.from_state(state, available_actions=available_actions)
         logits = policy(obs)
         legal_actions = list(obs.legal_actions)
         probs = policy.masked_probs(logits, legal_actions)
@@ -51,7 +52,7 @@ def sample_tb_trajectory(
         prev_size = int(obs.obs_tensor[OBS_SIZE_IDX])
         prev_depth = int(obs.obs_tensor[OBS_DEPTH_IDX])
         state.apply_action(action)
-        next_obs = Observation.from_state(state)
+        next_obs = Observation.from_state(state, available_actions=available_actions)
         step_reward = float(
             reward_func(
                 int(next_obs.obs_tensor[OBS_SIZE_IDX]),
@@ -70,7 +71,7 @@ def sample_tb_trajectory(
             )
         )
 
-    final_obs = Observation.from_state(state)
+    final_obs = Observation.from_state(state, available_actions=available_actions)
     final_size = int(final_obs.obs_tensor[OBS_SIZE_IDX])
     final_depth = int(final_obs.obs_tensor[OBS_DEPTH_IDX])
 

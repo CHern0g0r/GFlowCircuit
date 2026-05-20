@@ -5,9 +5,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.utils import Observation
+from src.algorithms.reinforce.policy import Policy
 
 
-class TBGFlowNetPolicy(nn.Module):
+class TBGFlowNetPolicy(Policy):
     def __init__(self, encoder: nn.Module, head: nn.Module, num_actions: int) -> None:
         super().__init__()
         self.encoder = encoder

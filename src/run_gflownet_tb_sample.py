@@ -11,7 +11,7 @@ from omegaconf import DictConfig, OmegaConf
 from src.algorithms.gflownet_tb import TBGFlowNetPolicy
 from src.algorithms.gflownet_tb.sampler import sample_tb_trajectory
 from src.models import REWARD_TYPES, encoder_factory, head_factory
-from src.train.utils import get_obs_dim_and_num_actions
+from src.utils import get_obs_dim_and_num_actions, normalize_available_actions
 
 
 def _build_tb_policy(cfg: DictConfig, obs_dim: int, node_dim: int, num_actions: int) -> TBGFlowNetPolicy:
@@ -109,6 +109,7 @@ def main() -> None:
 
     num_steps = int(args.num_steps if args.num_steps is not None else cfg["num_steps"])
     obs_dim, num_actions, node_dim, _ = get_obs_dim_and_num_actions(num_steps, str(circuit_path))
+    available_actions = normalize_available_actions(OmegaConf.select(cfg, "available_actions"), num_actions)
 
     policy = _build_tb_policy(cfg, obs_dim=obs_dim, node_dim=node_dim, num_actions=num_actions).to(device)
     ckpt = torch.load(checkpoint_path, map_location=device)
@@ -143,6 +144,7 @@ def main() -> None:
             reward_eps=reward_eps,
             reward_improvement_clip=reward_improvement_clip,
             sample_actions=True,
+            available_actions=available_actions,
         )
         trajectories.append(tr)
 
@@ -159,6 +161,7 @@ def main() -> None:
         "num_samples": len(trajectories),
         "num_steps": num_steps,
         "reward_type": reward_type,
+        "available_actions": available_actions,
         "reward_alpha": reward_alpha,
         "reward_eps": reward_eps,
         "reward_improvement_clip": reward_improvement_clip,

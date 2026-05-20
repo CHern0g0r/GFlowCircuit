@@ -1,0 +1,6 @@
+path: data/hdl-benchmarks/mcnc/Combinational/blif
+format: blif
+files:
+  - i10
+  - C1355
+

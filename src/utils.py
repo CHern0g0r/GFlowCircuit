@@ -20,6 +20,7 @@ class Observation:
     def from_state(
         cls,
         state: pyspiel.State,
+        available_actions: list[int] | None = None,
         timing: dict[str, Any] | None = None,
     ) -> "Observation":
         t0 = time.perf_counter()
@@ -34,7 +35,12 @@ class Observation:
             edge_attr=torch.as_tensor(ea)
         )
         t_legal = time.perf_counter()
-        legal_actions = list(state.legal_actions())
+        legal_actions = filter_legal_actions(state.legal_actions(), available_actions)
+        if available_actions is not None and not legal_actions and not state.is_terminal():
+            raise ValueError(
+                f"available_actions={available_actions} removes all legal actions "
+                f"from state legal actions {list(state.legal_actions())}"
+            )
         t1 = time.perf_counter()
         if timing is not None:
             timing["obs_from_state_calls"] = timing.get("obs_from_state_calls", 0) + 1
@@ -108,6 +114,46 @@ def load_circuits(dataset_cfg: Path) -> list[str]:
     if not circuits:
         raise FileNotFoundError("No existing circuit files found from dataset config.")
     return circuits
+
+
+def get_obs_dim_and_num_actions(num_steps: int, sample_circuit: str) -> tuple[int, int, int, int]:
+    probe_game = pyspiel.load_game("circuit", {"num_steps": int(num_steps), "file_path": sample_circuit})
+    probe_state = probe_game.new_initial_state()
+    obs_dim = len(probe_state.observation_tensor(0))
+    num_actions = int(probe_game.num_distinct_actions())
+    x, _, ea = pyspiel.circuit_graph(probe_state)
+    node_dim = x.shape[1]
+    edge_dim = ea.shape[1]
+    return obs_dim, num_actions, node_dim, edge_dim
+
+
+def normalize_available_actions(value: Any, num_actions: int) -> list[int] | None:
+    """Normalize an optional action whitelist from config.
+
+    ``None`` means every action exposed by the environment is available.
+    """
+    if value is None:
+        return None
+    actions = [int(action) for action in value]
+    if not actions:
+        raise ValueError("available_actions must be null or a non-empty list of action ids")
+    if len(set(actions)) != len(actions):
+        raise ValueError(f"available_actions contains duplicates: {actions}")
+    invalid = [action for action in actions if action < 0 or action >= int(num_actions)]
+    if invalid:
+        raise ValueError(f"available_actions contains ids outside [0, {int(num_actions) - 1}]: {invalid}")
+    return actions
+
+
+def filter_legal_actions(
+    legal_actions: Any,
+    available_actions: list[int] | None,
+) -> list[int]:
+    legal = [int(action) for action in legal_actions]
+    if available_actions is None:
+        return legal
+    available = set(available_actions)
+    return [action for action in legal if action in available]
 
 
 def discounted_returns(rewards: torch.Tensor, gamma: float = 1.0) -> torch.Tensor:

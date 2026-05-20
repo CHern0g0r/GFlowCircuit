@@ -13,8 +13,10 @@ from src.algorithms.gflownet_tb import TBGFlowNetPolicy, TBGFlowNetTrainer
 from src.algorithms.reinforce import ReinforcePolicy, ReinforceTrainer
 from src.baselines.resyn2 import build_resyn2_cache
 from src.utils import (
-    train_test_split,
+    get_obs_dim_and_num_actions,
     load_circuits,
+    normalize_available_actions,
+    train_test_split,
 )
 from src.models import (
     REWARD_TYPES,
@@ -22,7 +24,6 @@ from src.models import (
     head_factory,
     value_factory,
 )
-from src.train.utils import get_obs_dim_and_num_actions
 
 
 def _save_run_checkpoint(
@@ -120,7 +121,12 @@ def main(cfg: DictConfig) -> None:
         print(f"Split into {len(train_circuits)} train and {len(test_circuits)} test circuits")
 
     obs_dim, num_actions, node_dim, edge_dim = get_obs_dim_and_num_actions(cfg.num_steps, train_circuits[0])
-    print(f"Obs dim: {obs_dim}, num actions: {num_actions}, node dim: {node_dim}, edge dim: {edge_dim}")
+    available_actions = normalize_available_actions(OmegaConf.select(cfg, "available_actions"), num_actions)
+    available_actions_msg = "all" if available_actions is None else str(available_actions)
+    print(
+        f"Obs dim: {obs_dim}, num actions: {num_actions}, node dim: {node_dim}, "
+        f"edge dim: {edge_dim}, available actions: {available_actions_msg}"
+    )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     reward_class = REWARD_TYPES[cfg.reward.type]
@@ -169,6 +175,7 @@ def main(cfg: DictConfig) -> None:
                 device=device,
                 seed=run_seed,
                 log_dir=(tb_log_dir / f"run_{run_idx}") if tb_log_dir is not None else None,
+                available_actions=available_actions,
             )
 
             tb_cfg = OmegaConf.select(cfg, "tb")
@@ -232,6 +239,7 @@ def main(cfg: DictConfig) -> None:
                 device=device,
                 seed=run_seed,
                 log_dir=(tb_log_dir / f"run_{run_idx}") if tb_log_dir is not None else None,
+                available_actions=available_actions,
             )
 
             train_out = trainer.train(
@@ -280,6 +288,7 @@ def main(cfg: DictConfig) -> None:
         "episodes": int(cfg.episodes),
         "train_ratio": float(cfg.train_ratio),
         "baseline": baseline,
+        "available_actions": available_actions,
         "train_circuits": train_circuits,
         "test_circuits": test_circuits,
         "runs": runs,

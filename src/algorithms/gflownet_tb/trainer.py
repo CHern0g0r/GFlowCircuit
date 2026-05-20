@@ -12,7 +12,7 @@ from src.algorithms.gflownet_tb.eval import evaluate_tb
 from src.algorithms.gflownet_tb.loss import trajectory_balance_loss
 from src.algorithms.gflownet_tb.policy import TBGFlowNetPolicy
 from src.algorithms.gflownet_tb.sampler import sample_tb_trajectory
-from src.train.metrics import TensorBoardLogger
+from src.metrics import TensorBoardLogger
 
 
 class TBGFlowNetTrainer:
@@ -27,12 +27,14 @@ class TBGFlowNetTrainer:
         device: torch.device,
         seed: int,
         log_dir: Path | None = None,
+        available_actions: list[int] | None = None,
     ) -> None:
         self.policy = policy
         self.reward_class = reward_class
         self.train_circuits = train_circuits
         self.test_circuits = test_circuits
         self.resyn2_baselines = resyn2_baselines
+        self.available_actions = available_actions
         self.device = device
         self.rng = np.random.default_rng(seed)
         self._tb = TensorBoardLogger(log_dir) if log_dir is not None else None
@@ -66,6 +68,7 @@ class TBGFlowNetTrainer:
                     reward_eps=reward_eps,
                     reward_improvement_clip=reward_improvement_clip,
                     sample_actions=True,
+                    available_actions=self.available_actions,
                 )
                 trajectories.append(tr)
 
@@ -158,4 +161,5 @@ class TBGFlowNetTrainer:
             reward_eps=reward_eps,
             reward_improvement_clip=reward_improvement_clip,
             best_of_rollouts=best_of_rollouts,
+            available_actions=self.available_actions,
         )

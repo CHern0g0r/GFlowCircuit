@@ -14,7 +14,7 @@ from src.algorithms.reinforce import ReinforcePolicy
 from src.algorithms.reinforce.episode import run_reinforce_episode
 from src.baselines.resyn2 import build_resyn2_cache
 from src.models import REWARD_TYPES, encoder_factory, head_factory, value_factory
-from src.train.utils import get_obs_dim_and_num_actions
+from src.utils import get_obs_dim_and_num_actions, normalize_available_actions
 
 
 def _default_config_from_checkpoint(checkpoint_path: Path) -> Path:
@@ -110,6 +110,7 @@ def main() -> None:
 
     num_steps = int(args.num_steps if args.num_steps is not None else cfg["num_steps"])
     obs_dim, num_actions, node_dim, _ = get_obs_dim_and_num_actions(num_steps, str(circuit_path))
+    available_actions = normalize_available_actions(OmegaConf.select(cfg, "available_actions"), num_actions)
     reward_type = str(cfg["reward"]["type"])
     reward_class = REWARD_TYPES[reward_type]
 
@@ -151,6 +152,7 @@ def main() -> None:
                     reward_eps=reward_eps,
                     reward_improvement_clip=reward_improvement_clip,
                     sample_actions=True,
+                    available_actions=available_actions,
                 )
             )
 
@@ -168,6 +170,7 @@ def main() -> None:
             "num_samples": len(trajectories),
             "num_steps": num_steps,
             "reward_type": reward_type,
+            "available_actions": available_actions,
             "reward_alpha": reward_alpha,
             "reward_eps": reward_eps,
             "reward_improvement_clip": reward_improvement_clip,
@@ -224,6 +227,7 @@ def main() -> None:
                     sample_actions=True,
                     resyn2_baseline=resyn2_baseline,
                     baseline=baseline,
+                    available_actions=available_actions,
                 )
             )
 
@@ -242,6 +246,7 @@ def main() -> None:
             "num_steps": num_steps,
             "reward_type": reward_type,
             "baseline": baseline,
+            "available_actions": available_actions,
             "initial_size": initial_size,
             "initial_depth": initial_depth,
             "final_sizes": sizes,
@@ -266,4 +271,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
