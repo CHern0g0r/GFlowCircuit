@@ -1,0 +1,16 @@
+type: hybrid
+merge: concat
+graph:
+  type: zhu_gcn
+  input_graph: true
+  hidden_dim: 12
+  out_dim: 4
+  num_layers: 4
+  dropout: 0.0
+  pooling: mean
+  node_feature_mode: auto
+vector:
+  type: vector_mlp
+  source: zhu10
+  out_dim: 28
+  hidden_dims: []

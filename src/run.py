@@ -22,6 +22,8 @@ from src.models import (
     REWARD_TYPES,
     encoder_factory,
     head_factory,
+    prepare_encoder_config,
+    value_input_dim,
     value_factory,
 )
 
@@ -48,17 +50,25 @@ def _save_run_checkpoint(
     return ckpt_path
 
 
-def _build_models(cfg: DictConfig, obs_dim: int, node_dim: int, num_actions: int):
+def _build_models(
+    cfg: DictConfig,
+    obs_dim: int,
+    node_dim: int,
+    edge_dim: int,
+    num_actions: int,
+    available_actions: list[int] | None,
+):
     encoder_cfg = OmegaConf.to_container(cfg.encoder, resolve=True)
     if not isinstance(encoder_cfg, dict):
         raise TypeError("encoder config must resolve to a mapping")
-    if "in_dim" not in encoder_cfg:
-        if encoder_cfg.get("input_graph", False):
-            encoder_cfg["in_dim"] = node_dim
-        else:
-            encoder_cfg["in_dim"] = obs_dim
-    if "out_dim" not in encoder_cfg:
-        encoder_cfg["out_dim"] = obs_dim
+    encoder_cfg = prepare_encoder_config(
+        encoder_cfg,
+        obs_dim=obs_dim,
+        node_dim=node_dim,
+        edge_dim=edge_dim,
+        num_actions=num_actions,
+        available_actions=available_actions,
+    )
 
     enc = encoder_factory(encoder_cfg=encoder_cfg)
     head = head_factory(
@@ -70,18 +80,40 @@ def _build_models(cfg: DictConfig, obs_dim: int, node_dim: int, num_actions: int
     value_cfg = OmegaConf.select(cfg, "value")
     value_net = None
     if value_cfg is not None:
-        value_net = value_factory(obs_dim=obs_dim, value_cfg=value_cfg)
+        value_cfg_dict = OmegaConf.to_container(value_cfg, resolve=True)
+        if not isinstance(value_cfg_dict, dict):
+            raise TypeError("value config must resolve to a mapping")
+        value_net = value_factory(
+            obs_dim=value_input_dim(
+                obs_dim=obs_dim,
+                num_actions=num_actions,
+                available_actions=available_actions,
+                value_cfg=value_cfg_dict,
+            ),
+            value_cfg=value_cfg_dict,
+        )
     return policy, value_net
 
 
-def _build_tb_policy(cfg: DictConfig, obs_dim: int, node_dim: int, num_actions: int) -> TBGFlowNetPolicy:
+def _build_tb_policy(
+    cfg: DictConfig,
+    obs_dim: int,
+    node_dim: int,
+    edge_dim: int,
+    num_actions: int,
+    available_actions: list[int] | None,
+) -> TBGFlowNetPolicy:
     encoder_cfg = OmegaConf.to_container(cfg["encoder"], resolve=True)
     if not isinstance(encoder_cfg, dict):
         raise TypeError("encoder config must resolve to a mapping")
-    if "in_dim" not in encoder_cfg:
-        encoder_cfg["in_dim"] = node_dim if encoder_cfg.get("input_graph", False) else obs_dim
-    if "out_dim" not in encoder_cfg:
-        encoder_cfg["out_dim"] = obs_dim
+    encoder_cfg = prepare_encoder_config(
+        encoder_cfg,
+        obs_dim=obs_dim,
+        node_dim=node_dim,
+        edge_dim=edge_dim,
+        num_actions=num_actions,
+        available_actions=available_actions,
+    )
 
     enc = encoder_factory(encoder_cfg=encoder_cfg)
     head = head_factory(
@@ -165,7 +197,14 @@ def main(cfg: DictConfig) -> None:
         print("Starting run", run_idx)
         run_seed = int(cfg.seed + run_idx)
         if algorithm_name == "gflownet_tb":
-            policy = _build_tb_policy(cfg, obs_dim=obs_dim, node_dim=node_dim, num_actions=num_actions).to(device)
+            policy = _build_tb_policy(
+                cfg,
+                obs_dim=obs_dim,
+                node_dim=node_dim,
+                edge_dim=edge_dim,
+                num_actions=num_actions,
+                available_actions=available_actions,
+            ).to(device)
             trainer = TBGFlowNetTrainer(
                 policy=policy,
                 reward_class=reward_class,
@@ -222,7 +261,14 @@ def main(cfg: DictConfig) -> None:
                 }
             )
         elif algorithm_name == "reinforce":
-            policy, value_net = _build_models(cfg, obs_dim=obs_dim, node_dim=node_dim, num_actions=num_actions)
+            policy, value_net = _build_models(
+                cfg,
+                obs_dim=obs_dim,
+                node_dim=node_dim,
+                edge_dim=edge_dim,
+                num_actions=num_actions,
+                available_actions=available_actions,
+            )
             policy = policy.to(device)
             if value_net is not None:
                 value_net = value_net.to(device)

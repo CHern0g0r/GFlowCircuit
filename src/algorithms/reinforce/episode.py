@@ -9,7 +9,7 @@ from torch.distributions import Categorical
 
 from src.algorithms.reinforce.policy import Policy
 from src.baselines.resyn2 import OBS_DEPTH_IDX, OBS_SIZE_IDX, get_depth, get_size
-from src.utils import Observation, StepSample
+from src.utils import Observation, StepSample, ZhuVectorState, resolve_vector_action_ids
 
 
 def run_reinforce_episode(
@@ -40,6 +40,12 @@ def run_reinforce_episode(
     initial_depth = int(obs0.obs_tensor[OBS_DEPTH_IDX])
 
     reward_func = reward_class(initial_size, initial_depth)
+    vector_state = ZhuVectorState(
+        initial_size=initial_size,
+        initial_depth=initial_depth,
+        num_steps=int(num_steps),
+        action_ids=resolve_vector_action_ids(policy.num_actions, available_actions),
+    )
     zhu_step_baseline = float(resyn2_baseline.get("zhu_reward_baseline_per_step", 0.0))
     if baseline == "zhu_resyn2":
         if hasattr(reward_func, "set_baseline"):
@@ -57,6 +63,14 @@ def run_reinforce_episode(
             state,
             available_actions=available_actions,
             timing=timing if timing_enabled else None,
+        )
+        step_idx = len(trajectory)
+        obs = obs.with_vector(
+            vector_state.vector(
+                current_size=get_size(obs),
+                current_depth=get_depth(obs),
+                step=step_idx,
+            )
         )
 
         t_policy_start = time.perf_counter()
@@ -83,6 +97,7 @@ def run_reinforce_episode(
         t_apply_end = time.perf_counter()
         if timing_enabled:
             timing["apply_action_s"] = timing.get("apply_action_s", 0.0) + (t_apply_end - t_apply_start)
+        vector_state.record_action(action=action, previous_size=prev_size, previous_depth=prev_depth)
 
         next_obs = Observation.from_state(
             state,

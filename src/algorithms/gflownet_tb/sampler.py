@@ -9,7 +9,7 @@ from torch.distributions import Categorical
 from src.algorithms.gflownet_tb.policy import TBGFlowNetPolicy
 from src.algorithms.gflownet_tb.types import TBStep, TBTrajectory
 from src.baselines.resyn2 import OBS_DEPTH_IDX, OBS_SIZE_IDX
-from src.utils import Observation
+from src.utils import Observation, ZhuVectorState, resolve_vector_action_ids
 
 
 def sample_tb_trajectory(
@@ -31,6 +31,12 @@ def sample_tb_trajectory(
     initial_size = int(obs0.obs_tensor[OBS_SIZE_IDX])
     initial_depth = int(obs0.obs_tensor[OBS_DEPTH_IDX])
     reward_func = reward_class(initial_size, initial_depth)
+    vector_state = ZhuVectorState(
+        initial_size=initial_size,
+        initial_depth=initial_depth,
+        num_steps=int(num_steps),
+        action_ids=resolve_vector_action_ids(policy.num_actions, available_actions),
+    )
 
     steps: list[TBStep] = []
     log_pf_terms: list[torch.Tensor] = []
@@ -38,6 +44,13 @@ def sample_tb_trajectory(
 
     while not state.is_terminal():
         obs = Observation.from_state(state, available_actions=available_actions)
+        obs = obs.with_vector(
+            vector_state.vector(
+                current_size=int(obs.obs_tensor[OBS_SIZE_IDX]),
+                current_depth=int(obs.obs_tensor[OBS_DEPTH_IDX]),
+                step=len(steps),
+            )
+        )
         logits = policy(obs)
         legal_actions = list(obs.legal_actions)
         probs = policy.masked_probs(logits, legal_actions)
@@ -52,6 +65,7 @@ def sample_tb_trajectory(
         prev_size = int(obs.obs_tensor[OBS_SIZE_IDX])
         prev_depth = int(obs.obs_tensor[OBS_DEPTH_IDX])
         state.apply_action(action)
+        vector_state.record_action(action=action, previous_size=prev_size, previous_depth=prev_depth)
         next_obs = Observation.from_state(state, available_actions=available_actions)
         step_reward = float(
             reward_func(

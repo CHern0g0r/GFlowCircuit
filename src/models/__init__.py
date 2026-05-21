@@ -1,5 +1,7 @@
 import torch.nn as nn
 
+from src.utils import zhu_vector_dim
+
 from .rewards import (
     SizeReward,
     DepthReward,
@@ -7,8 +9,9 @@ from .rewards import (
     LinearReward,
     ZhuSizeReward,
 )
-from .Linear import IdEncoder, LinearHead, MLPHead, ValueMLP
+from .Linear import HybridEncoder, IdEncoder, LinearHead, MLPHead, ValueMLP, VectorMLPEncoder
 from .GCN import GCNEncoder
+from .zhuGCN import ZhuGCNEncoder
 from .policy import ReinforcePolicy, Policy
 
 
@@ -23,9 +26,80 @@ REWARD_TYPES = {
 ENCODERS = {
     "id": IdEncoder,
     "gcn": GCNEncoder,
+    "zhu_gcn": ZhuGCNEncoder,
+    "vector_mlp": VectorMLPEncoder,
 }
 
+
+def prepare_encoder_config(
+    encoder_cfg: dict,
+    *,
+    obs_dim: int,
+    node_dim: int,
+    edge_dim: int,
+    num_actions: int,
+    available_actions: list[int] | None = None,
+) -> dict:
+    cfg = dict(encoder_cfg)
+    encoder_type = cfg.get("type")
+    if encoder_type == "hybrid":
+        if "graph" not in cfg or "vector" not in cfg:
+            raise ValueError("hybrid encoder requires 'graph' and 'vector' configs")
+        graph_cfg = prepare_encoder_config(
+            cfg["graph"],
+            obs_dim=obs_dim,
+            node_dim=node_dim,
+            edge_dim=edge_dim,
+            num_actions=num_actions,
+            available_actions=available_actions,
+        )
+        vector_cfg = prepare_encoder_config(
+            cfg["vector"],
+            obs_dim=obs_dim,
+            node_dim=node_dim,
+            edge_dim=edge_dim,
+            num_actions=num_actions,
+            available_actions=available_actions,
+        )
+        out_dim = int(graph_cfg["out_dim"]) + int(vector_cfg["out_dim"])
+        if "out_dim" in cfg and int(cfg["out_dim"]) != out_dim:
+            raise ValueError(f"hybrid out_dim={cfg['out_dim']} does not match branch sum {out_dim}")
+        cfg["graph"] = graph_cfg
+        cfg["vector"] = vector_cfg
+        cfg["out_dim"] = out_dim
+        return cfg
+
+    if encoder_type == "vector_mlp":
+        source = str(cfg.get("source", "zhu10"))
+        if source != "zhu10":
+            raise ValueError(f"Unsupported vector encoder source: {source}")
+        cfg["source"] = source
+        cfg.setdefault("in_dim", zhu_vector_dim(num_actions, available_actions))
+        cfg.setdefault("out_dim", cfg["in_dim"])
+        return cfg
+
+    if "in_dim" not in cfg:
+        if cfg.get("input_graph", False):
+            cfg["in_dim"] = node_dim
+        else:
+            cfg["in_dim"] = obs_dim
+    if cfg.get("input_graph", False):
+        cfg.setdefault("edge_dim", edge_dim)
+    if "out_dim" not in cfg:
+        cfg["out_dim"] = obs_dim
+    return cfg
+
+
 def encoder_factory(encoder_cfg) -> nn.Module:
+    if encoder_cfg["type"] == "hybrid":
+        graph_encoder = encoder_factory(encoder_cfg["graph"])
+        vector_encoder = encoder_factory(encoder_cfg["vector"])
+        return HybridEncoder(
+            graph_encoder=graph_encoder,
+            vector_encoder=vector_encoder,
+            merge=encoder_cfg.get("merge", "concat"),
+            out_dim=encoder_cfg.get("out_dim"),
+        )
     if encoder_cfg['type'] in ENCODERS:
         return ENCODERS[encoder_cfg['type']](**encoder_cfg)
     else:
@@ -54,6 +128,21 @@ def value_factory(obs_dim: int, value_cfg: dict) -> nn.Module:
         return VALUE_NETWORKS[value_type](in_dim=obs_dim, **value_cfg)
     raise ValueError(f"Unknown value network type: {value_type}")
 
+
+def value_input_dim(
+    *,
+    obs_dim: int,
+    num_actions: int,
+    available_actions: list[int] | None,
+    value_cfg: dict,
+) -> int:
+    input_name = str(value_cfg.get("input", "obs_tensor"))
+    if input_name in ("zhu10", "vector", "vector_tensor"):
+        return zhu_vector_dim(num_actions, available_actions)
+    if input_name == "obs_tensor":
+        return obs_dim
+    raise ValueError(f"Unsupported value input: {input_name}")
+
 POLICY_TYPES = {
     "reinforce": ReinforcePolicy,
 }
@@ -68,4 +157,3 @@ def policy_factory(encoder: nn.Module, head: nn.Module, num_actions: int, policy
         )
     else:
         raise ValueError(f"Unknown policy type: {policy_cfg['type']}")
-

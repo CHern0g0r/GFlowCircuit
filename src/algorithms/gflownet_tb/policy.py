@@ -10,20 +10,14 @@ from src.algorithms.reinforce.policy import Policy
 
 class TBGFlowNetPolicy(Policy):
     def __init__(self, encoder: nn.Module, head: nn.Module, num_actions: int) -> None:
-        super().__init__()
+        super().__init__(num_actions=num_actions)
         self.encoder = encoder
         self.head = head
-        self.num_actions = int(num_actions)
         self.log_z = nn.Parameter(torch.tensor(0.0, dtype=torch.float32))
 
     def forward(self, obs: Observation) -> torch.Tensor:
         device = self.log_z.device
-        if obs.obs_tensor.device != device or obs.graph.x.device != device:
-            obs = Observation(
-                obs_tensor=obs.obs_tensor.to(device),
-                graph=obs.graph.to(device),
-                legal_actions=obs.legal_actions,
-            )
+        obs = obs.observation_to_device(device)
         emb = self.encoder(obs)
         logits = self.head(emb)
         if logits.dim() == 2:

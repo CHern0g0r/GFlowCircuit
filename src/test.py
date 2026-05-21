@@ -13,7 +13,7 @@ from src.algorithms.gflownet_tb.sampler import sample_tb_trajectory
 from src.algorithms.reinforce import ReinforcePolicy
 from src.algorithms.reinforce.episode import run_reinforce_episode
 from src.baselines.resyn2 import build_resyn2_cache
-from src.models import REWARD_TYPES, encoder_factory, head_factory, value_factory
+from src.models import REWARD_TYPES, encoder_factory, head_factory, prepare_encoder_config, value_factory, value_input_dim
 from src.utils import get_obs_dim_and_num_actions, normalize_available_actions
 
 
@@ -47,14 +47,26 @@ def _get_algorithm_name(cfg: DictConfig) -> str:
     return str(name)
 
 
-def _build_backbone(cfg: DictConfig, *, obs_dim: int, node_dim: int, num_actions: int):
+def _build_backbone(
+    cfg: DictConfig,
+    *,
+    obs_dim: int,
+    node_dim: int,
+    edge_dim: int,
+    num_actions: int,
+    available_actions: list[int] | None,
+):
     encoder_cfg = OmegaConf.to_container(cfg["encoder"], resolve=True)
     if not isinstance(encoder_cfg, dict):
         raise TypeError("encoder config must resolve to a mapping")
-    if "in_dim" not in encoder_cfg:
-        encoder_cfg["in_dim"] = node_dim if encoder_cfg.get("input_graph", False) else obs_dim
-    if "out_dim" not in encoder_cfg:
-        encoder_cfg["out_dim"] = obs_dim
+    encoder_cfg = prepare_encoder_config(
+        encoder_cfg,
+        obs_dim=obs_dim,
+        node_dim=node_dim,
+        edge_dim=edge_dim,
+        num_actions=num_actions,
+        available_actions=available_actions,
+    )
 
     enc = encoder_factory(encoder_cfg=encoder_cfg)
     head = head_factory(
@@ -109,13 +121,20 @@ def main() -> None:
     device = torch.device(device_str)
 
     num_steps = int(args.num_steps if args.num_steps is not None else cfg["num_steps"])
-    obs_dim, num_actions, node_dim, _ = get_obs_dim_and_num_actions(num_steps, str(circuit_path))
+    obs_dim, num_actions, node_dim, edge_dim = get_obs_dim_and_num_actions(num_steps, str(circuit_path))
     available_actions = normalize_available_actions(OmegaConf.select(cfg, "available_actions"), num_actions)
     reward_type = str(cfg["reward"]["type"])
     reward_class = REWARD_TYPES[reward_type]
 
     if algorithm_name == "gflownet_tb":
-        enc, head = _build_backbone(cfg, obs_dim=obs_dim, node_dim=node_dim, num_actions=num_actions)
+        enc, head = _build_backbone(
+            cfg,
+            obs_dim=obs_dim,
+            node_dim=node_dim,
+            edge_dim=edge_dim,
+            num_actions=num_actions,
+            available_actions=available_actions,
+        )
         policy = TBGFlowNetPolicy(encoder=enc, head=head, num_actions=num_actions).to(device)
 
         ckpt = torch.load(checkpoint_path, map_location=device)
@@ -186,13 +205,31 @@ def main() -> None:
             "mean_final_return": mean(returns) if returns else None,
         }
     elif algorithm_name == "reinforce":
-        enc, head = _build_backbone(cfg, obs_dim=obs_dim, node_dim=node_dim, num_actions=num_actions)
+        enc, head = _build_backbone(
+            cfg,
+            obs_dim=obs_dim,
+            node_dim=node_dim,
+            edge_dim=edge_dim,
+            num_actions=num_actions,
+            available_actions=available_actions,
+        )
         policy = ReinforcePolicy(encoder=enc, head=head, num_actions=num_actions).to(device)
 
         value_net = None
         value_cfg = OmegaConf.select(cfg, "value")
         if value_cfg is not None:
-            value_net = value_factory(obs_dim=obs_dim, value_cfg=value_cfg).to(device)
+            value_cfg_dict = OmegaConf.to_container(value_cfg, resolve=True)
+            if not isinstance(value_cfg_dict, dict):
+                raise TypeError("value config must resolve to a mapping")
+            value_net = value_factory(
+                obs_dim=value_input_dim(
+                    obs_dim=obs_dim,
+                    num_actions=num_actions,
+                    available_actions=available_actions,
+                    value_cfg=value_cfg_dict,
+                ),
+                value_cfg=value_cfg_dict,
+            ).to(device)
 
         ckpt = torch.load(checkpoint_path, map_location=device)
         state_dict = ckpt.get("policy_state_dict")

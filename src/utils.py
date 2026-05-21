@@ -6,7 +6,8 @@ import time
 
 from pathlib import Path
 from torch_geometric.data import Data
-from dataclasses import dataclass
+from collections import deque
+from dataclasses import dataclass, replace
 from typing import Any
 
 
@@ -15,6 +16,7 @@ class Observation:
     obs_tensor: torch.Tensor
     graph: Data
     legal_actions: list[int]
+    vector_tensor: torch.Tensor | None = None
 
     @classmethod
     def from_state(
@@ -54,13 +56,22 @@ class Observation:
 
     def observation_to_device(self, device: torch.device) -> "Observation":
         """Move observation tensors to ``device`` (OpenSpiel observations default to CPU)."""
-        if self.obs_tensor.device == device and self.graph.x.device == device:
+        vector_tensor = self.vector_tensor
+        if (
+            self.obs_tensor.device == device
+            and self.graph.x.device == device
+            and (vector_tensor is None or vector_tensor.device == device)
+        ):
             return self
         return Observation(
             obs_tensor=self.obs_tensor.to(device, non_blocking=device.type == "cuda"),
             graph=self.graph.to(device),
             legal_actions=list(self.legal_actions),
+            vector_tensor=vector_tensor.to(device, non_blocking=device.type == "cuda") if vector_tensor is not None else None,
         )
+
+    def with_vector(self, vector_tensor: torch.Tensor) -> "Observation":
+        return replace(self, vector_tensor=vector_tensor)
 
 
 @dataclass
@@ -154,6 +165,66 @@ def filter_legal_actions(
         return legal
     available = set(available_actions)
     return [action for action in legal if action in available]
+
+
+def resolve_vector_action_ids(
+    num_actions: int,
+    available_actions: list[int] | None,
+) -> list[int]:
+    if available_actions is not None:
+        return list(available_actions)
+    return list(range(int(num_actions)))
+
+
+def zhu_vector_dim(
+    num_actions: int,
+    available_actions: list[int] | None = None,
+) -> int:
+    return 5 + len(resolve_vector_action_ids(num_actions, available_actions))
+
+
+@dataclass
+class ZhuVectorState:
+    initial_size: int
+    initial_depth: int
+    num_steps: int
+    action_ids: list[int]
+    history_window: int = 3
+
+    def __post_init__(self) -> None:
+        if not self.action_ids:
+            raise ValueError("ZhuVectorState requires at least one action id")
+        self._initial_size_denom = float(max(1, int(self.initial_size)))
+        self._initial_depth_denom = float(max(1, int(self.initial_depth)))
+        self._num_steps_denom = float(max(1, int(self.num_steps)))
+        self.previous_size = int(self.initial_size)
+        self.previous_depth = int(self.initial_depth)
+        self._action_to_idx = {int(action): idx for idx, action in enumerate(self.action_ids)}
+        self._recent_actions: deque[int] = deque(maxlen=int(self.history_window))
+
+    def vector(self, *, current_size: int, current_depth: int, step: int) -> torch.Tensor:
+        counts = torch.zeros(len(self.action_ids), dtype=torch.float32)
+        for action in self._recent_actions:
+            idx = self._action_to_idx.get(int(action))
+            if idx is not None:
+                counts[idx] += 1.0
+        counts = counts / float(max(1, int(self.history_window)))
+        prefix = torch.tensor(
+            [
+                float(current_size) / self._initial_size_denom,
+                float(current_depth) / self._initial_depth_denom,
+                float(self.previous_size) / self._initial_size_denom,
+                float(self.previous_depth) / self._initial_depth_denom,
+            ],
+            dtype=torch.float32,
+        )
+        suffix = torch.tensor([float(step) / self._num_steps_denom], dtype=torch.float32)
+        return torch.cat([prefix, counts, suffix], dim=0)
+
+    def record_action(self, *, action: int, previous_size: int, previous_depth: int) -> None:
+        self.previous_size = int(previous_size)
+        self.previous_depth = int(previous_depth)
+        self._recent_actions.append(int(action))
 
 
 def discounted_returns(rewards: torch.Tensor, gamma: float = 1.0) -> torch.Tensor:
