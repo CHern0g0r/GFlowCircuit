@@ -9,6 +9,7 @@ from torch.distributions import Categorical
 from src.algorithms.gflownet_tb.policy import TBGFlowNetPolicy
 from src.algorithms.gflownet_tb.types import TBStep, TBTrajectory
 from src.baselines.resyn2 import OBS_DEPTH_IDX, OBS_SIZE_IDX
+from src.eval_metrics import comparable_return
 from src.utils import Observation, ZhuVectorState, resolve_vector_action_ids
 
 
@@ -89,15 +90,14 @@ def sample_tb_trajectory(
     final_size = int(final_obs.obs_tensor[OBS_SIZE_IDX])
     final_depth = int(final_obs.obs_tensor[OBS_DEPTH_IDX])
 
-    td_final_return = float(
-        reward_func(
-            final_size,
-            final_depth,
-            initial_size,
-            initial_depth,
-        )
+    comp_return = comparable_return(
+        reward_class=reward_class,
+        initial_size=initial_size,
+        initial_depth=initial_depth,
+        final_size=final_size,
+        final_depth=final_depth,
     )
-    improvement = max(-reward_improvement_clip, min(reward_improvement_clip, td_final_return))
+    improvement = max(-reward_improvement_clip, min(reward_improvement_clip, comp_return))
     terminal_reward = max(reward_eps, math.exp(float(reward_alpha) * improvement))
     log_reward = float(math.log(terminal_reward))
 
@@ -114,7 +114,7 @@ def sample_tb_trajectory(
         final_size=final_size,
         final_depth=final_depth,
         final_return=float(total_reward),
-        td_final_return=td_final_return,
+        comparable_return=comp_return,
         log_pf_sum=log_pf_sum,
         log_pb_sum=torch.zeros_like(log_pf_sum),
         log_reward=log_reward,

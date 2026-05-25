@@ -11,6 +11,12 @@ from tqdm import tqdm, trange
 
 from src.algorithms.reinforce.episode import run_reinforce_episode
 from src.algorithms.reinforce.policy import Policy
+from src.eval_metrics import (
+    aggregate_common_eval_metrics,
+    final_qor,
+    normalized_improvement_vs_resyn2_2,
+    size_reduction_pct,
+)
 from src.metrics import TensorBoardLogger
 from src.utils import StepSample, discounted_returns
 
@@ -191,10 +197,15 @@ class ReinforceTrainer:
                     "train_steps": episode["num_steps_taken"],
                     "baseline": float(baseline_ema.item()),
                     "test_mean_final_return": eval_summary["mean_final_return"],
+                    "test_mean_comparable_return": eval_summary["mean_comparable_return"],
                     "test_mean_size_reduction": eval_summary["mean_size_reduction"],
                     "test_mean_depth_reduction": eval_summary["mean_depth_reduction"],
                     "test_mean_size_reduction_pct": eval_summary["mean_size_reduction_pct"],
                     "test_win_rate_vs_resyn2_1": eval_summary["win_rate_vs_resyn2_1"],
+                    "test_win_rate_vs_resyn2_2": eval_summary["win_rate_vs_resyn2_2"],
+                    "test_mean_normalized_improvement_vs_resyn2_2": eval_summary[
+                        "mean_normalized_improvement_vs_resyn2_2"
+                    ],
                     "test_mean_resyn2_baseline_total_reward": eval_summary["mean_resyn2_baseline_total_reward"],
                     "test_mean_resyn2_baseline_final_step_reward": eval_summary["mean_resyn2_baseline_final_step_reward"],
                 }
@@ -206,12 +217,17 @@ class ReinforceTrainer:
                         ep,
                         {
                             "eval/mean_final_return": float(eval_summary["mean_final_return"]),
+                            "eval/mean_comparable_return": float(eval_summary["mean_comparable_return"]),
                             "eval/mean_size_reduction": float(eval_summary["mean_size_reduction"]),
                             "eval/mean_depth_reduction": float(eval_summary["mean_depth_reduction"]),
-                            "eval/best_size": float(eval_summary["best_final_size"]),
-                            "eval/best_depth": float(eval_summary["best_final_depth"]),
-                            "eval/best_qor": float(eval_summary["best_final_qor"]),
+                            "eval/mean_final_size": float(eval_summary["mean_final_size"]),
+                            "eval/mean_final_depth": float(eval_summary["mean_final_depth"]),
+                            "eval/mean_final_qor": float(eval_summary["mean_final_qor"]),
                             "eval/win_rate_vs_resyn2_1": float(eval_summary["win_rate_vs_resyn2_1"]),
+                            "eval/win_rate_vs_resyn2_2": float(eval_summary["win_rate_vs_resyn2_2"]),
+                            "eval/mean_normalized_improvement_vs_resyn2_2": float(
+                                eval_summary["mean_normalized_improvement_vs_resyn2_2"]
+                            ),
                             "eval/mean_resyn2_baseline_total_reward": float(
                                 eval_summary["mean_resyn2_baseline_total_reward"]
                             ),
@@ -243,8 +259,8 @@ class ReinforceTrainer:
                 )
                 candidates.append(ep)
             ep = max(candidates, key=lambda r: float(r["final_return"]))
-            initial_size = max(1, int(ep["initial_size"]))
-            reduction_pct = 100.0 * (initial_size - int(ep["final_size"])) / initial_size
+            resyn2_1_size = int(ep["resyn2_variants"]["resyn2_1"]["final_size"])
+            resyn2_2_size = int(ep["resyn2_variants"]["resyn2_2"]["final_size"])
             per_circuit.append(
                 {
                     "file_path": c,
@@ -252,18 +268,31 @@ class ReinforceTrainer:
                     "final_size": ep["final_size"],
                     "initial_depth": ep["initial_depth"],
                     "final_depth": ep["final_depth"],
+                    "final_qor": final_qor(final_size=ep["final_size"], final_depth=ep["final_depth"]),
                     "final_return": ep["final_return"],
+                    "comparable_return": ep["comparable_return"],
                     "num_steps_taken": ep["num_steps_taken"],
-                    "size_reduction_pct": reduction_pct,
+                    "size_reduction_pct": size_reduction_pct(
+                        initial_size=ep["initial_size"],
+                        final_size=ep["final_size"],
+                    ),
                     "resyn2_baseline_total_reward": ep["resyn2_baseline_total_reward"],
                     "resyn2_baseline_final_step_reward": ep["resyn2_baseline_final_step_reward"],
-                    "resyn2_1_size": ep["resyn2_variants"]["resyn2_1"]["final_size"],
-                    "resyn2_2_size": ep["resyn2_variants"]["resyn2_2"]["final_size"],
+                    "resyn2_1_size": resyn2_1_size,
+                    "resyn2_2_size": resyn2_2_size,
                     "resyn2_inf_size": ep["resyn2_variants"]["resyn2_inf"]["final_size"],
+                    "normalized_improvement_vs_resyn2_2": normalized_improvement_vs_resyn2_2(
+                        initial_size=ep["initial_size"],
+                        final_size=ep["final_size"],
+                        resyn2_2_size=resyn2_2_size,
+                    ),
                 }
             )
 
         mean_return = float(np.mean([r["final_return"] for r in per_circuit])) if per_circuit else 0.0
+        mean_comparable_return = (
+            float(np.mean([r["comparable_return"] for r in per_circuit])) if per_circuit else 0.0
+        )
         mean_reduction = float(np.mean([r["size_reduction_pct"] for r in per_circuit])) if per_circuit else 0.0
         mean_size_reduction = (
             float(np.mean([float(r["initial_size"] - r["final_size"]) for r in per_circuit])) if per_circuit else 0.0
@@ -271,30 +300,26 @@ class ReinforceTrainer:
         mean_depth_reduction = (
             float(np.mean([float(r["initial_depth"] - r["final_depth"]) for r in per_circuit])) if per_circuit else 0.0
         )
-        best_final_size = min((r["final_size"] for r in per_circuit), default=0)
-        best_final_depth = min((r["final_depth"] for r in per_circuit), default=0)
-        best_final_qor = min((r["final_size"] * r["final_depth"] for r in per_circuit), default=0)
         mean_resyn2_baseline_total_reward = (
             float(np.mean([r["resyn2_baseline_total_reward"] for r in per_circuit])) if per_circuit else 0.0
         )
         mean_resyn2_baseline_final_step_reward = (
             float(np.mean([r["resyn2_baseline_final_step_reward"] for r in per_circuit])) if per_circuit else 0.0
         )
-        win_rate_vs_resyn2_1 = (
-            float(np.mean([1.0 if r["final_size"] < r["resyn2_1_size"] else 0.0 for r in per_circuit]))
-            if per_circuit
-            else 0.0
-        )
+        common = aggregate_common_eval_metrics(per_circuit)
         return {
             "num_circuits": len(per_circuit),
             "mean_final_return": mean_return,
+            "mean_comparable_return": mean_comparable_return,
             "mean_size_reduction": mean_size_reduction,
             "mean_depth_reduction": mean_depth_reduction,
             "mean_size_reduction_pct": mean_reduction,
-            "best_final_size": best_final_size,
-            "best_final_depth": best_final_depth,
-            "best_final_qor": best_final_qor,
-            "win_rate_vs_resyn2_1": win_rate_vs_resyn2_1,
+            "mean_final_size": common["mean_final_size"],
+            "mean_final_depth": common["mean_final_depth"],
+            "mean_final_qor": common["mean_final_qor"],
+            "win_rate_vs_resyn2_1": common["win_rate_vs_resyn2_1"],
+            "win_rate_vs_resyn2_2": common["win_rate_vs_resyn2_2"],
+            "mean_normalized_improvement_vs_resyn2_2": common["mean_normalized_improvement_vs_resyn2_2"],
             "per_circuit": per_circuit,
             "mean_resyn2_baseline_total_reward": mean_resyn2_baseline_total_reward,
             "mean_resyn2_baseline_final_step_reward": mean_resyn2_baseline_final_step_reward,

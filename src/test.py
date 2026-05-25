@@ -177,7 +177,9 @@ def main() -> None:
 
         sizes = [int(t.final_size) for t in trajectories]
         depths = [int(t.final_depth) for t in trajectories]
+        qors = [int(t.final_size) * int(t.final_depth) for t in trajectories]
         returns = [float(t.final_return) for t in trajectories]
+        comparable_returns = [float(t.comparable_return) for t in trajectories]
         initial_size = int(trajectories[0].initial_size) if trajectories else 0
         initial_depth = int(trajectories[0].initial_depth) if trajectories else 0
 
@@ -198,11 +200,12 @@ def main() -> None:
             "final_sizes": sizes,
             "final_depths": depths,
             "final_returns": returns,
-            "best_final_size": min(sizes) if sizes else None,
-            "best_final_depth": min(depths) if depths else None,
+            "comparable_returns": comparable_returns,
             "mean_final_size": mean(sizes) if sizes else None,
             "mean_final_depth": mean(depths) if depths else None,
+            "mean_final_qor": mean(qors) if qors else None,
             "mean_final_return": mean(returns) if returns else None,
+            "mean_comparable_return": mean(comparable_returns) if comparable_returns else None,
         }
     elif algorithm_name == "reinforce":
         enc, head = _build_backbone(
@@ -270,7 +273,9 @@ def main() -> None:
 
         sizes = [int(ep["final_size"]) for ep in episodes]
         depths = [int(ep["final_depth"]) for ep in episodes]
+        qors = [int(ep["final_size"]) * int(ep["final_depth"]) for ep in episodes]
         returns = [float(ep["final_return"]) for ep in episodes]
+        comparable_returns = [float(ep["comparable_return"]) for ep in episodes]
         initial_size = int(episodes[0]["initial_size"]) if episodes else 0
         initial_depth = int(episodes[0]["initial_depth"]) if episodes else 0
 
@@ -289,11 +294,12 @@ def main() -> None:
             "final_sizes": sizes,
             "final_depths": depths,
             "final_returns": returns,
-            "best_final_size": min(sizes) if sizes else None,
-            "best_final_depth": min(depths) if depths else None,
+            "comparable_returns": comparable_returns,
             "mean_final_size": mean(sizes) if sizes else None,
             "mean_final_depth": mean(depths) if depths else None,
+            "mean_final_qor": mean(qors) if qors else None,
             "mean_final_return": mean(returns) if returns else None,
+            "mean_comparable_return": mean(comparable_returns) if comparable_returns else None,
         }
     else:
         raise ValueError(f"Unknown algorithm: {algorithm_name}")

@@ -9,6 +9,7 @@ from torch.distributions import Categorical
 
 from src.algorithms.reinforce.policy import Policy
 from src.baselines.resyn2 import OBS_DEPTH_IDX, OBS_SIZE_IDX, get_depth, get_size
+from src.eval_metrics import comparable_return
 from src.utils import Observation, StepSample, ZhuVectorState, resolve_vector_action_ids
 
 
@@ -131,6 +132,13 @@ def run_reinforce_episode(
     )
     total_reward = float(sum(step.reward for step in trajectory))
     trajectory_reward = float(reward_func(get_size(final_obs), get_depth(final_obs), initial_size, initial_depth))
+    comp_return = comparable_return(
+        reward_class=reward_class,
+        initial_size=initial_size,
+        initial_depth=initial_depth,
+        final_size=get_size(final_obs),
+        final_depth=get_depth(final_obs),
+    )
 
     out: dict[str, Any] = {
         "trajectory": trajectory,
@@ -146,6 +154,7 @@ def run_reinforce_episode(
         "best_qor": best_qor,
         "actions_applied": [int(step.action) for step in trajectory],
         "final_step_reward": trajectory_reward,
+        "comparable_return": comp_return,
         "baseline": baseline or "none",
     }
 
