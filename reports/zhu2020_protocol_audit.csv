@@ -1,0 +1,21 @@
+actual,check,expected,status
+all='reinforce',algorithm,'reinforce',pass
+all='zhu_size',reward.type,'zhu_size',pass
+all=20,num_steps,20,pass
+all=200,episodes,200,pass
+all=0.9,gamma,0.9,pass
+all=0.0008,policy_learning_rate,0.0008,pass
+all=0.003,value_learning_rate,0.003,pass
+all='zhu_resyn2',baseline,'zhu_resyn2',pass
+all=True,paper_mode.per_circuit_mode,True,pass
+all=10,paper_mode.num_runs,10,pass
+all=10,paper_mode.infer_rollouts,10,pass
+all=0.0,entropy_beta,0.0,pass
+all=None,clip_grad_norm_policy,None,pass
+all=None,clip_grad_norm_value,None,pass
+all=False,normalize_returns,False,pass
+"all=[0, 1, 2, 3, 4]",available_actions,"[0, 1, 2, 3, 4]",pass
+all='hybrid',encoder.type,'hybrid',pass
+all='zhu_gcn',encoder.graph.type,'zhu_gcn',pass
+all='zhu10',encoder.vector.source,'zhu10',pass
+all='zhu10',value.input,'zhu10',pass

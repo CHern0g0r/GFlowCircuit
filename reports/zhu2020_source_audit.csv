@@ -1,0 +1,6 @@
+actual,check,expected,status
+"[0, 1, 2, 0, 1, 3, 0, 4, 3, 0]",RESYN2_ACTION_SEQUENCE,"[0, 1, 2, 0, 1, 3, 0, 4, 3, 0]",pass
+found,resyn2_inf_stops_after_5_unchanged,unchanged_runs >= 5,pass
+found,evaluation_selects_best_final_return,"max(candidates, key=lambda r: float(r[""final_return""]))",pass
+found,zhu_baseline_applied_to_reward,"baseline == ""zhu_resyn2""",pass
+found,zhu_reward_subtracts_baseline,return gain - self.baseline_scale * self.baseline_per_step,pass
