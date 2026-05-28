@@ -77,6 +77,93 @@ def _build_backbone(
     return enc, head
 
 
+def _tb_reward_params(
+    cfg: DictConfig,
+    *,
+    reward_alpha: float | None = None,
+    reward_eps: float | None = None,
+    reward_improvement_clip: float | None = None,
+) -> dict[str, float]:
+    tb_cfg = OmegaConf.select(cfg, "tb")
+    if tb_cfg is None:
+        tb_cfg = OmegaConf.select(cfg, "algorithm.tb")
+    return {
+        "reward_alpha": float(
+            reward_alpha if reward_alpha is not None else (OmegaConf.select(tb_cfg, "reward_alpha") or 4.0)
+        ),
+        "reward_eps": float(reward_eps if reward_eps is not None else (OmegaConf.select(tb_cfg, "reward_eps") or 1e-8)),
+        "reward_improvement_clip": float(
+            reward_improvement_clip
+            if reward_improvement_clip is not None
+            else (OmegaConf.select(tb_cfg, "reward_improvement_clip") or 2.0)
+        ),
+    }
+
+
+def _load_policy(
+    *,
+    checkpoint_path: Path,
+    cfg: DictConfig,
+    circuit_path: Path,
+    num_steps: int,
+    device: torch.device,
+) -> dict[str, object]:
+    obs_dim, num_actions, node_dim, edge_dim = get_obs_dim_and_num_actions(num_steps, str(circuit_path))
+    available_actions = normalize_available_actions(OmegaConf.select(cfg, "available_actions"), num_actions)
+    reward_type = str(cfg["reward"]["type"])
+    reward_class = REWARD_TYPES[reward_type]
+    algorithm_name = _get_algorithm_name(cfg)
+
+    enc, head = _build_backbone(
+        cfg,
+        obs_dim=obs_dim,
+        node_dim=node_dim,
+        edge_dim=edge_dim,
+        num_actions=num_actions,
+        available_actions=available_actions,
+    )
+    value_net = None
+    if algorithm_name == "gflownet_tb":
+        policy = TBGFlowNetPolicy(encoder=enc, head=head, num_actions=num_actions).to(device)
+    elif algorithm_name == "reinforce":
+        policy = ReinforcePolicy(encoder=enc, head=head, num_actions=num_actions).to(device)
+        value_cfg = OmegaConf.select(cfg, "value")
+        if value_cfg is not None:
+            value_cfg_dict = OmegaConf.to_container(value_cfg, resolve=True)
+            if not isinstance(value_cfg_dict, dict):
+                raise TypeError("value config must resolve to a mapping")
+            value_net = value_factory(
+                obs_dim=value_input_dim(
+                    obs_dim=obs_dim,
+                    num_actions=num_actions,
+                    available_actions=available_actions,
+                    value_cfg=value_cfg_dict,
+                ),
+                value_cfg=value_cfg_dict,
+            ).to(device)
+    else:
+        raise ValueError(f"Unknown algorithm: {algorithm_name}")
+
+    ckpt = torch.load(checkpoint_path, map_location=device)
+    state_dict = ckpt.get("policy_state_dict")
+    if state_dict is None:
+        raise KeyError(f"'policy_state_dict' is missing in checkpoint: {checkpoint_path}")
+    policy.load_state_dict(state_dict)
+    policy.eval()
+
+    if value_net is not None and ckpt.get("value_state_dict") is not None:
+        value_net.load_state_dict(ckpt["value_state_dict"])
+        value_net.eval()
+
+    return {
+        "algorithm": algorithm_name,
+        "policy": policy,
+        "available_actions": available_actions,
+        "reward_class": reward_class,
+        "reward_type": reward_type,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Test/sampling entrypoint for trained models (single circuit).")
     parser.add_argument("--checkpoint", required=True, help="Path to checkpoint file (e.g. saved_models/run_0/last.pt).")
@@ -111,7 +198,6 @@ def main() -> None:
         else _default_config_from_checkpoint(checkpoint_path)
     )
     cfg = _load_cfg(config_path)
-    algorithm_name = _get_algorithm_name(cfg)
 
     torch.manual_seed(int(args.seed))
     if torch.cuda.is_available():
@@ -121,42 +207,25 @@ def main() -> None:
     device = torch.device(device_str)
 
     num_steps = int(args.num_steps if args.num_steps is not None else cfg["num_steps"])
-    obs_dim, num_actions, node_dim, edge_dim = get_obs_dim_and_num_actions(num_steps, str(circuit_path))
-    available_actions = normalize_available_actions(OmegaConf.select(cfg, "available_actions"), num_actions)
-    reward_type = str(cfg["reward"]["type"])
-    reward_class = REWARD_TYPES[reward_type]
+    loaded = _load_policy(
+        checkpoint_path=checkpoint_path,
+        cfg=cfg,
+        circuit_path=circuit_path,
+        num_steps=num_steps,
+        device=device,
+    )
+    algorithm_name = str(loaded["algorithm"])
+    policy = loaded["policy"]
+    available_actions = loaded["available_actions"]
+    reward_type = str(loaded["reward_type"])
+    reward_class = loaded["reward_class"]
 
     if algorithm_name == "gflownet_tb":
-        enc, head = _build_backbone(
+        tb_params = _tb_reward_params(
             cfg,
-            obs_dim=obs_dim,
-            node_dim=node_dim,
-            edge_dim=edge_dim,
-            num_actions=num_actions,
-            available_actions=available_actions,
-        )
-        policy = TBGFlowNetPolicy(encoder=enc, head=head, num_actions=num_actions).to(device)
-
-        ckpt = torch.load(checkpoint_path, map_location=device)
-        state_dict = ckpt.get("policy_state_dict")
-        if state_dict is None:
-            raise KeyError(f"'policy_state_dict' is missing in checkpoint: {checkpoint_path}")
-        policy.load_state_dict(state_dict)
-        policy.eval()
-
-        tb_cfg = OmegaConf.select(cfg, "tb")
-        if tb_cfg is None:
-            tb_cfg = OmegaConf.select(cfg, "algorithm.tb")
-        reward_alpha = float(
-            args.reward_alpha if args.reward_alpha is not None else (OmegaConf.select(tb_cfg, "reward_alpha") or 4.0)
-        )
-        reward_eps = float(
-            args.reward_eps if args.reward_eps is not None else (OmegaConf.select(tb_cfg, "reward_eps") or 1e-8)
-        )
-        reward_improvement_clip = float(
-            args.reward_improvement_clip
-            if args.reward_improvement_clip is not None
-            else (OmegaConf.select(tb_cfg, "reward_improvement_clip") or 2.0)
+            reward_alpha=args.reward_alpha,
+            reward_eps=args.reward_eps,
+            reward_improvement_clip=args.reward_improvement_clip,
         )
 
         trajectories = []
@@ -167,11 +236,9 @@ def main() -> None:
                     num_steps=num_steps,
                     policy=policy,
                     reward_class=reward_class,
-                    reward_alpha=reward_alpha,
-                    reward_eps=reward_eps,
-                    reward_improvement_clip=reward_improvement_clip,
                     sample_actions=True,
                     available_actions=available_actions,
+                    **tb_params,
                 )
             )
 
@@ -192,9 +259,9 @@ def main() -> None:
             "num_steps": num_steps,
             "reward_type": reward_type,
             "available_actions": available_actions,
-            "reward_alpha": reward_alpha,
-            "reward_eps": reward_eps,
-            "reward_improvement_clip": reward_improvement_clip,
+            "reward_alpha": tb_params["reward_alpha"],
+            "reward_eps": tb_params["reward_eps"],
+            "reward_improvement_clip": tb_params["reward_improvement_clip"],
             "initial_size": initial_size,
             "initial_depth": initial_depth,
             "final_sizes": sizes,
@@ -208,43 +275,6 @@ def main() -> None:
             "mean_comparable_return": mean(comparable_returns) if comparable_returns else None,
         }
     elif algorithm_name == "reinforce":
-        enc, head = _build_backbone(
-            cfg,
-            obs_dim=obs_dim,
-            node_dim=node_dim,
-            edge_dim=edge_dim,
-            num_actions=num_actions,
-            available_actions=available_actions,
-        )
-        policy = ReinforcePolicy(encoder=enc, head=head, num_actions=num_actions).to(device)
-
-        value_net = None
-        value_cfg = OmegaConf.select(cfg, "value")
-        if value_cfg is not None:
-            value_cfg_dict = OmegaConf.to_container(value_cfg, resolve=True)
-            if not isinstance(value_cfg_dict, dict):
-                raise TypeError("value config must resolve to a mapping")
-            value_net = value_factory(
-                obs_dim=value_input_dim(
-                    obs_dim=obs_dim,
-                    num_actions=num_actions,
-                    available_actions=available_actions,
-                    value_cfg=value_cfg_dict,
-                ),
-                value_cfg=value_cfg_dict,
-            ).to(device)
-
-        ckpt = torch.load(checkpoint_path, map_location=device)
-        state_dict = ckpt.get("policy_state_dict")
-        if state_dict is None:
-            raise KeyError(f"'policy_state_dict' is missing in checkpoint: {checkpoint_path}")
-        policy.load_state_dict(state_dict)
-        if value_net is not None and ckpt.get("value_state_dict") is not None:
-            value_net.load_state_dict(ckpt["value_state_dict"])
-        policy.eval()
-        if value_net is not None:
-            value_net.eval()
-
         baseline = OmegaConf.select(cfg, "baseline")
         baseline_scale = float(OmegaConf.select(cfg, "baseline_scale") or 1.0)
         resyn2_baselines = build_resyn2_cache(
