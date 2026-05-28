@@ -9,19 +9,23 @@ import torch
 from hydra.utils import to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 
+from src.algorithms.gflownet_tb import TBGFlowNetPolicy, TBGFlowNetTrainer
+from src.algorithms.reinforce import ReinforcePolicy, ReinforceTrainer
+from src.baselines.resyn2 import build_resyn2_cache
 from src.utils import (
-    train_test_split,
+    get_obs_dim_and_num_actions,
     load_circuits,
+    normalize_available_actions,
+    train_test_split,
 )
 from src.models import (
-    policy_factory,
-    REWARD_TYPES,
+    reward_class_factory,
     encoder_factory,
     head_factory,
+    prepare_encoder_config,
+    value_input_dim,
     value_factory,
 )
-from src.train.utils import get_obs_dim_and_num_actions, build_resyn2_cache
-from src.train import Trainer
 
 
 def _save_run_checkpoint(
@@ -46,17 +50,25 @@ def _save_run_checkpoint(
     return ckpt_path
 
 
-def _build_models(cfg: DictConfig, obs_dim: int, node_dim: int, num_actions: int):
+def _build_models(
+    cfg: DictConfig,
+    obs_dim: int,
+    node_dim: int,
+    edge_dim: int,
+    num_actions: int,
+    available_actions: list[int] | None,
+):
     encoder_cfg = OmegaConf.to_container(cfg.encoder, resolve=True)
     if not isinstance(encoder_cfg, dict):
         raise TypeError("encoder config must resolve to a mapping")
-    if "in_dim" not in encoder_cfg:
-        if encoder_cfg.get("input_graph", False):
-            encoder_cfg["in_dim"] = node_dim
-        else:
-            encoder_cfg["in_dim"] = obs_dim
-    if "out_dim" not in encoder_cfg:
-        encoder_cfg["out_dim"] = obs_dim
+    encoder_cfg = prepare_encoder_config(
+        encoder_cfg,
+        obs_dim=obs_dim,
+        node_dim=node_dim,
+        edge_dim=edge_dim,
+        num_actions=num_actions,
+        available_actions=available_actions,
+    )
 
     enc = encoder_factory(encoder_cfg=encoder_cfg)
     head = head_factory(
@@ -64,17 +76,65 @@ def _build_models(cfg: DictConfig, obs_dim: int, node_dim: int, num_actions: int
         num_actions=num_actions,
         head_cfg=cfg.head,
     )
-    policy = policy_factory(
-        encoder=enc,
-        head=head,
-        num_actions=num_actions,
-        policy_cfg=cfg.policy,
-    )
+    policy = ReinforcePolicy(encoder=enc, head=head, num_actions=num_actions)
     value_cfg = OmegaConf.select(cfg, "value")
     value_net = None
     if value_cfg is not None:
-        value_net = value_factory(obs_dim=obs_dim, value_cfg=value_cfg)
+        value_cfg_dict = OmegaConf.to_container(value_cfg, resolve=True)
+        if not isinstance(value_cfg_dict, dict):
+            raise TypeError("value config must resolve to a mapping")
+        value_net = value_factory(
+            obs_dim=value_input_dim(
+                obs_dim=obs_dim,
+                num_actions=num_actions,
+                available_actions=available_actions,
+                value_cfg=value_cfg_dict,
+            ),
+            value_cfg=value_cfg_dict,
+        )
     return policy, value_net
+
+
+def _build_tb_policy(
+    cfg: DictConfig,
+    obs_dim: int,
+    node_dim: int,
+    edge_dim: int,
+    num_actions: int,
+    available_actions: list[int] | None,
+) -> TBGFlowNetPolicy:
+    encoder_cfg = OmegaConf.to_container(cfg["encoder"], resolve=True)
+    if not isinstance(encoder_cfg, dict):
+        raise TypeError("encoder config must resolve to a mapping")
+    encoder_cfg = prepare_encoder_config(
+        encoder_cfg,
+        obs_dim=obs_dim,
+        node_dim=node_dim,
+        edge_dim=edge_dim,
+        num_actions=num_actions,
+        available_actions=available_actions,
+    )
+
+    enc = encoder_factory(encoder_cfg=encoder_cfg)
+    head = head_factory(
+        obs_dim=encoder_cfg["out_dim"],
+        num_actions=num_actions,
+        head_cfg=cfg["head"],
+    )
+    return TBGFlowNetPolicy(encoder=enc, head=head, num_actions=num_actions)
+
+
+def _get_algorithm_name(cfg: DictConfig) -> str:
+    algo_cfg = OmegaConf.select(cfg, "algorithm")
+    if algo_cfg is None:
+        return "reinforce"
+    name = OmegaConf.select(algo_cfg, "name")
+    if name is None:
+        # Backwards-compat: some configs might set algorithm: gflownet_tb (string)
+        if isinstance(algo_cfg, str):
+            return str(algo_cfg)
+        return "reinforce"
+    return str(name)
 
 
 @hydra.main(version_base=None, config_path="../cfg", config_name="default")
@@ -93,10 +153,16 @@ def main(cfg: DictConfig) -> None:
         print(f"Split into {len(train_circuits)} train and {len(test_circuits)} test circuits")
 
     obs_dim, num_actions, node_dim, edge_dim = get_obs_dim_and_num_actions(cfg.num_steps, train_circuits[0])
-    print(f"Obs dim: {obs_dim}, num actions: {num_actions}, node dim: {node_dim}, edge dim: {edge_dim}")
+    available_actions = normalize_available_actions(OmegaConf.select(cfg, "available_actions"), num_actions)
+    available_actions_msg = "all" if available_actions is None else str(available_actions)
+    print(
+        f"Obs dim: {obs_dim}, num actions: {num_actions}, node dim: {node_dim}, "
+        f"edge dim: {edge_dim}, available actions: {available_actions_msg}"
+    )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    reward_class = REWARD_TYPES[cfg.reward.type]
+    reward_class = reward_class_factory(cfg.reward)
+    algorithm_name = _get_algorithm_name(cfg)
 
     use_tb = OmegaConf.select(cfg, "logging.tensorboard")
     if use_tb is None:
@@ -129,57 +195,138 @@ def main(cfg: DictConfig) -> None:
     runs: list[dict] = []
     for run_idx in range(num_runs):
         print("Starting run", run_idx)
-        policy, value_net = _build_models(cfg, obs_dim=obs_dim, node_dim=node_dim, num_actions=num_actions)
         run_seed = int(cfg.seed + run_idx)
-        trainer = Trainer(
-            train_circuits=train_circuits,
-            test_circuits=test_circuits,
-            policy=policy,
-            value_network=value_net,
-            reward_class=reward_class,
-            terminal_reward=bool(cfg.terminal_reward),
-            baseline=baseline,
-            resyn2_baselines=resyn2_baselines,
-            device=device,
-            seed=run_seed,
-            log_dir=(tb_log_dir / f"run_{run_idx}") if tb_log_dir is not None else None,
-        )
+        if algorithm_name == "gflownet_tb":
+            policy = _build_tb_policy(
+                cfg,
+                obs_dim=obs_dim,
+                node_dim=node_dim,
+                edge_dim=edge_dim,
+                num_actions=num_actions,
+                available_actions=available_actions,
+            ).to(device)
+            trainer = TBGFlowNetTrainer(
+                policy=policy,
+                reward_class=reward_class,
+                train_circuits=train_circuits,
+                test_circuits=test_circuits,
+                resyn2_baselines=resyn2_baselines,
+                device=device,
+                seed=run_seed,
+                log_dir=(tb_log_dir / f"run_{run_idx}") if tb_log_dir is not None else None,
+                available_actions=available_actions,
+            )
 
-        train_out = trainer.train(
-            num_steps=int(cfg.num_steps),
-            episodes=int(cfg.episodes),
-            eval_every=int(cfg.eval_every),
-            policy_learning_rate=policy_lr,
-            value_learning_rate=value_lr,
-            gamma=float(cfg.gamma),
-            baseline_alpha=float(cfg.baseline_alpha),
-            best_of_eval_rollouts=best_of_rollouts,
-            entropy_beta=entropy_beta,
-            clip_grad_norm_policy=float(clip_grad_norm_policy) if clip_grad_norm_policy is not None else None,
-            clip_grad_norm_value=float(clip_grad_norm_value) if clip_grad_norm_value is not None else None,
-            normalize_returns=normalize_returns,
-        )
+            tb_cfg = OmegaConf.select(cfg, "tb")
+            if tb_cfg is None:
+                tb_cfg = OmegaConf.select(cfg, "algorithm.tb")
+            tb_trajectories_per_episode = int(OmegaConf.select(tb_cfg, "trajectories_per_episode") or 4)
+            tb_reward_alpha = float(OmegaConf.select(tb_cfg, "reward_alpha") or 4.0)
+            tb_reward_eps = float(OmegaConf.select(tb_cfg, "reward_eps") or 1e-8)
+            tb_reward_improvement_clip = float(OmegaConf.select(tb_cfg, "reward_improvement_clip") or 2.0)
 
-        final_eval = trainer.evaluate(num_steps=int(cfg.num_steps), best_of_rollouts=best_of_rollouts)
-        ckpt_path = _save_run_checkpoint(
-            output_dir=output_dir,
-            run_idx=run_idx,
-            seed=run_seed,
-            policy=policy,
-            value_net=value_net,
-        )
-        print(f"Saved checkpoint: {ckpt_path}")
-        runs.append(
-            {
-                "run_idx": run_idx,
-                "seed": run_seed,
-                "history": train_out["history"],
-                "final_eval": final_eval,
-                "checkpoint_path": str(ckpt_path),
-            }
-        )
+            train_out = trainer.train(
+                episodes=int(cfg.episodes),
+                num_steps=int(cfg.num_steps),
+                eval_every=int(cfg.eval_every),
+                learning_rate=float(cfg.learning_rate),
+                trajectories_per_episode=tb_trajectories_per_episode,
+                reward_alpha=tb_reward_alpha,
+                reward_eps=tb_reward_eps,
+                reward_improvement_clip=tb_reward_improvement_clip,
+                best_of_eval_rollouts=best_of_rollouts,
+            )
+            final_eval = trainer.evaluate(
+                num_steps=int(cfg.num_steps),
+                reward_alpha=tb_reward_alpha,
+                reward_eps=tb_reward_eps,
+                reward_improvement_clip=tb_reward_improvement_clip,
+                best_of_rollouts=best_of_rollouts,
+            )
+
+            ckpt_path = _save_run_checkpoint(
+                output_dir=output_dir,
+                run_idx=run_idx,
+                seed=run_seed,
+                policy=policy,
+                value_net=None,
+            )
+            runs.append(
+                {
+                    "run_idx": run_idx,
+                    "seed": run_seed,
+                    "history": train_out["history"],
+                    "final_eval": final_eval,
+                    "checkpoint_path": str(ckpt_path),
+                }
+            )
+        elif algorithm_name == "reinforce":
+            policy, value_net = _build_models(
+                cfg,
+                obs_dim=obs_dim,
+                node_dim=node_dim,
+                edge_dim=edge_dim,
+                num_actions=num_actions,
+                available_actions=available_actions,
+            )
+            policy = policy.to(device)
+            if value_net is not None:
+                value_net = value_net.to(device)
+
+            trainer = ReinforceTrainer(
+                train_circuits=train_circuits,
+                test_circuits=test_circuits,
+                policy=policy,
+                value_network=value_net,
+                reward_class=reward_class,
+                terminal_reward=bool(cfg.terminal_reward),
+                baseline=baseline,
+                resyn2_baselines=resyn2_baselines,
+                device=device,
+                seed=run_seed,
+                log_dir=(tb_log_dir / f"run_{run_idx}") if tb_log_dir is not None else None,
+                available_actions=available_actions,
+            )
+
+            train_out = trainer.train(
+                num_steps=int(cfg.num_steps),
+                episodes=int(cfg.episodes),
+                eval_every=int(cfg.eval_every),
+                policy_learning_rate=policy_lr,
+                value_learning_rate=value_lr,
+                gamma=float(cfg.gamma),
+                baseline_alpha=float(cfg.baseline_alpha),
+                best_of_eval_rollouts=best_of_rollouts,
+                entropy_beta=entropy_beta,
+                clip_grad_norm_policy=float(clip_grad_norm_policy) if clip_grad_norm_policy is not None else None,
+                clip_grad_norm_value=float(clip_grad_norm_value) if clip_grad_norm_value is not None else None,
+                normalize_returns=normalize_returns,
+            )
+
+            final_eval = trainer.evaluate(num_steps=int(cfg.num_steps), best_of_rollouts=best_of_rollouts)
+            ckpt_path = _save_run_checkpoint(
+                output_dir=output_dir,
+                run_idx=run_idx,
+                seed=run_seed,
+                policy=policy,
+                value_net=value_net,
+            )
+            runs.append(
+                {
+                    "run_idx": run_idx,
+                    "seed": run_seed,
+                    "history": train_out["history"],
+                    "final_eval": final_eval,
+                    "checkpoint_path": str(ckpt_path),
+                }
+            )
+        else:
+            raise ValueError(f"Unknown algorithm: {algorithm_name}")
+
+        print(f"Saved checkpoint: {runs[-1]['checkpoint_path']}")
 
     report = {
+        "algorithm": algorithm_name,
         "hydra_config": OmegaConf.to_container(cfg, resolve=True),
         "dataset_cfg": str(dataset_cfg),
         "seed": int(cfg.seed),
@@ -187,6 +334,7 @@ def main(cfg: DictConfig) -> None:
         "episodes": int(cfg.episodes),
         "train_ratio": float(cfg.train_ratio),
         "baseline": baseline,
+        "available_actions": available_actions,
         "train_circuits": train_circuits,
         "test_circuits": test_circuits,
         "runs": runs,
@@ -196,7 +344,7 @@ def main(cfg: DictConfig) -> None:
     }
 
     print("\nFinal test evaluation:")
-    print(json.dumps(runs[-1]["final_eval"], indent=2))
+    print(json.dumps(runs[-1]["final_eval"] if runs else {}, indent=2))
 
     json_out = OmegaConf.select(cfg, "json_out")
     if json_out not in (None, "", "~"):

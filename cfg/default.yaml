@@ -28,6 +28,8 @@ reward:
 
 # Training
 num_steps: 10
+# Optional whitelist of environment action ids. null keeps every action exposed by the environment.
+available_actions: null
 episodes: 200
 eval_every: 20
 train_ratio: 0.75

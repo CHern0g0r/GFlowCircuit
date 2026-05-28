@@ -6,3 +6,4 @@ num_layers: 2
 dropout: 0.0
 pooling: mean
 use_layer_norm: false
+use_edge_attr: true

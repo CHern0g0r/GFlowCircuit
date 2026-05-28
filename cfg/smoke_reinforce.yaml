@@ -1,0 +1,32 @@
+# Small REINFORCE smoke test: 2 circuits -> 1 train + 1 test.
+defaults:
+  - default
+  - algorithm: reinforce
+  - override encoder: id
+  - _self_
+
+run_name: smoke_reinforce
+dataset_cfg: cfg/data/smoke_mcnc_two.yaml
+
+# Keep this tiny/fast.
+num_steps: 5
+episodes: 10
+eval_every: 1
+train_ratio: 0.5
+seed: 0
+
+# Disable extra logging for smoke.
+paper_mode:
+  per_circuit_mode: false
+  num_runs: 1
+  infer_rollouts: 1
+
+logging:
+  tensorboard: false
+
+baseline: null
+terminal_reward: true
+entropy_beta: 0.0
+
+json_out: ${output_dir}/smoke_reinforce_report.json
+

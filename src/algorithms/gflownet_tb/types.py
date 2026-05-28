@@ -24,7 +24,7 @@ class TBTrajectory:
     final_size: int
     final_depth: int
     final_return: float
-    td_final_return: float
+    comparable_return: float
     log_pf_sum: torch.Tensor
     log_pb_sum: torch.Tensor
     log_reward: float

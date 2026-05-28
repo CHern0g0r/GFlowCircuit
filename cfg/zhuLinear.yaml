@@ -4,7 +4,7 @@ defaults:
   - override encoder: hybrid_zhu
   - _self_
 
-run_name: zhu2020_size_mcnc
+run_name: zhuLinear_mcnc
 dataset_cfg: cfg/data/mcnc_zhu10.yaml
 
 policy:
@@ -18,7 +18,9 @@ value:
   hidden_dims: [32]
 
 reward:
-  type: zhu_size
+  type: linear
+  c_size: 0.5
+  c_depth: 0.5
 
 num_steps: 20
 available_actions: [0, 1, 2, 3, 4]

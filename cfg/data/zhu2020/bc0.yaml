@@ -1,0 +1,4 @@
+path: data/hdl-benchmarks/mcnc/Combinational/blif
+format: blif
+files:
+  - bc0

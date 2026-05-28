@@ -6,7 +6,7 @@ export PYTHONPATH=$PYTHONPATH:$openspiel_path/build/python
 run_name="zhu2020_size_mcnc_tb_$(date +%m%d_%H%M%S)"
 
 echo "Running GFlowNet-TB multi-run experiment..."
-python -m src.run_gflownet_tb \
+python -m src.run \
   --config-name gflownet_tb_mcnc \
   run_name="${run_name}" \
   seed=0 \

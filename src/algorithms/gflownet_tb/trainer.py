@@ -12,7 +12,7 @@ from src.algorithms.gflownet_tb.eval import evaluate_tb
 from src.algorithms.gflownet_tb.loss import trajectory_balance_loss
 from src.algorithms.gflownet_tb.policy import TBGFlowNetPolicy
 from src.algorithms.gflownet_tb.sampler import sample_tb_trajectory
-from src.train.metrics import TensorBoardLogger
+from src.metrics import TensorBoardLogger
 
 
 class TBGFlowNetTrainer:
@@ -27,12 +27,14 @@ class TBGFlowNetTrainer:
         device: torch.device,
         seed: int,
         log_dir: Path | None = None,
+        available_actions: list[int] | None = None,
     ) -> None:
         self.policy = policy
         self.reward_class = reward_class
         self.train_circuits = train_circuits
         self.test_circuits = test_circuits
         self.resyn2_baselines = resyn2_baselines
+        self.available_actions = available_actions
         self.device = device
         self.rng = np.random.default_rng(seed)
         self._tb = TensorBoardLogger(log_dir) if log_dir is not None else None
@@ -66,6 +68,7 @@ class TBGFlowNetTrainer:
                     reward_eps=reward_eps,
                     reward_improvement_clip=reward_improvement_clip,
                     sample_actions=True,
+                    available_actions=self.available_actions,
                 )
                 trajectories.append(tr)
 
@@ -112,11 +115,15 @@ class TBGFlowNetTrainer:
                     "train_log_z": float(self.policy.log_z.detach().item()),
                     "train_final_return": mean_final_return,
                     "test_mean_final_return": eval_summary["mean_final_return"],
-                    "test_td_mean_final_return": eval_summary["td_mean_final_return"],
+                    "test_mean_comparable_return": eval_summary["mean_comparable_return"],
                     "test_mean_size_reduction": eval_summary["mean_size_reduction"],
                     "test_mean_depth_reduction": eval_summary["mean_depth_reduction"],
                     "test_mean_size_reduction_pct": eval_summary["mean_size_reduction_pct"],
                     "test_win_rate_vs_resyn2_1": eval_summary["win_rate_vs_resyn2_1"],
+                    "test_win_rate_vs_resyn2_2": eval_summary["win_rate_vs_resyn2_2"],
+                    "test_mean_normalized_improvement_vs_resyn2_2": eval_summary[
+                        "mean_normalized_improvement_vs_resyn2_2"
+                    ],
                 }
                 history.append(row)
                 print(json.dumps(row))
@@ -125,13 +132,20 @@ class TBGFlowNetTrainer:
                         ep,
                         {
                             "eval/mean_final_return": float(eval_summary["mean_final_return"]),
-                            "eval/td_mean_final_return": float(eval_summary["td_mean_final_return"]),
+                            "eval/mean_comparable_return": float(eval_summary["mean_comparable_return"]),
                             "eval/mean_size_reduction": float(eval_summary["mean_size_reduction"]),
                             "eval/mean_depth_reduction": float(eval_summary["mean_depth_reduction"]),
                             "eval/mean_terminal_reward": float(eval_summary["mean_terminal_reward"]),
+                            "eval/mean_final_size": float(eval_summary["mean_final_size"]),
+                            "eval/mean_final_depth": float(eval_summary["mean_final_depth"]),
+                            "eval/mean_final_qor": float(eval_summary["mean_final_qor"]),
                             "eval/best_final_return": float(eval_summary["best_final_return"]),
-                            "eval/td_best_final_return": float(eval_summary["td_best_final_return"]),
+                            "eval/best_comparable_return": float(eval_summary["best_comparable_return"]),
                             "eval/win_rate_vs_resyn2_1": float(eval_summary["win_rate_vs_resyn2_1"]),
+                            "eval/win_rate_vs_resyn2_2": float(eval_summary["win_rate_vs_resyn2_2"]),
+                            "eval/mean_normalized_improvement_vs_resyn2_2": float(
+                                eval_summary["mean_normalized_improvement_vs_resyn2_2"]
+                            ),
                         },
                     )
 
@@ -158,4 +172,5 @@ class TBGFlowNetTrainer:
             reward_eps=reward_eps,
             reward_improvement_clip=reward_improvement_clip,
             best_of_rollouts=best_of_rollouts,
+            available_actions=self.available_actions,
         )

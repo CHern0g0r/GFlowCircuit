@@ -12,7 +12,7 @@ except ImportError:  # pragma: no cover
 
 
 class TensorBoardLogger:
-    """Thin wrapper so training works without `tensorboard` installed."""
+    """Thin wrapper so training works without tensorboard installed."""
 
     def __init__(self, log_dir: Path | None) -> None:
         self._writer: Any = None
@@ -22,7 +22,7 @@ class TensorBoardLogger:
         log_dir.mkdir(parents=True, exist_ok=True)
         if SummaryWriter is None:
             raise ImportError(
-                "TensorBoard logging requires the `tensorboard` package. "
+                "TensorBoard logging requires the tensorboard package. "
                 "Install with: pip install tensorboard"
             )
         self._writer = SummaryWriter(log_dir=str(log_dir))
