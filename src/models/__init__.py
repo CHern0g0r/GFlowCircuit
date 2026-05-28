@@ -1,5 +1,7 @@
 import torch.nn as nn
 
+from functools import partial
+
 from src.utils import zhu_vector_dim
 
 from .rewards import (
@@ -8,6 +10,7 @@ from .rewards import (
     ProductOfDiffReward,
     LinearReward,
     ZhuSizeReward,
+    DiffOfProductReward,
 )
 from .Linear import HybridEncoder, IdEncoder, LinearHead, MLPHead, ValueMLP, VectorMLPEncoder
 from .GCN import GCNEncoder
@@ -19,9 +22,20 @@ REWARD_TYPES = {
     "size": SizeReward,
     "depth": DepthReward,
     "product_of_diff": ProductOfDiffReward,
+    "diff_of_product": DiffOfProductReward,
     "linear": LinearReward,
     "zhu_size": ZhuSizeReward,
 }
+
+def reward_class_factory(reward_cfg: dict) -> type:
+    reward_type = reward_cfg.get("type")
+    if reward_type in REWARD_TYPES:
+        reward_kwargs = {k: v for k, v in reward_cfg.items() if k != "type"}
+        if not reward_kwargs:
+            return REWARD_TYPES[reward_type]
+        return partial(REWARD_TYPES[reward_type], **reward_kwargs)
+    else:
+        raise ValueError(f"Unknown reward type: {reward_type}")
 
 ENCODERS = {
     "id": IdEncoder,

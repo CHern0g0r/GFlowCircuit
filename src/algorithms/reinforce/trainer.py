@@ -278,6 +278,10 @@ class ReinforceTrainer:
                     ),
                     "resyn2_baseline_total_reward": ep["resyn2_baseline_total_reward"],
                     "resyn2_baseline_final_step_reward": ep["resyn2_baseline_final_step_reward"],
+                    "zhu_reward_baseline_per_step": ep.get("zhu_reward_baseline_per_step", 0.0),
+                    "reward_baseline_per_step": ep["reward_baseline_per_step"],
+                    "reward_raw_gain_mean": ep["reward_raw_gain_mean"],
+                    "reward_adjusted_mean": ep["reward_adjusted_mean"],
                     "resyn2_1_size": resyn2_1_size,
                     "resyn2_2_size": resyn2_2_size,
                     "resyn2_inf_size": ep["resyn2_variants"]["resyn2_inf"]["final_size"],
@@ -306,6 +310,15 @@ class ReinforceTrainer:
         mean_resyn2_baseline_final_step_reward = (
             float(np.mean([r["resyn2_baseline_final_step_reward"] for r in per_circuit])) if per_circuit else 0.0
         )
+        mean_zhu_reward_baseline_per_step = (
+            float(np.mean([r["zhu_reward_baseline_per_step"] for r in per_circuit])) if per_circuit else 0.0
+        )
+        mean_reward_raw_gain = (
+            float(np.mean([r["reward_raw_gain_mean"] for r in per_circuit])) if per_circuit else 0.0
+        )
+        mean_reward_adjusted = (
+            float(np.mean([r["reward_adjusted_mean"] for r in per_circuit])) if per_circuit else 0.0
+        )
         common = aggregate_common_eval_metrics(per_circuit)
         return {
             "num_circuits": len(per_circuit),
@@ -323,4 +336,7 @@ class ReinforceTrainer:
             "per_circuit": per_circuit,
             "mean_resyn2_baseline_total_reward": mean_resyn2_baseline_total_reward,
             "mean_resyn2_baseline_final_step_reward": mean_resyn2_baseline_final_step_reward,
+            "mean_zhu_reward_baseline_per_step": mean_zhu_reward_baseline_per_step,
+            "mean_reward_raw_gain": mean_reward_raw_gain,
+            "mean_reward_adjusted": mean_reward_adjusted,
         }

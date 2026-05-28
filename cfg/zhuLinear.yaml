@@ -1,0 +1,46 @@
+defaults:
+  - default
+  - algorithm: reinforce
+  - override encoder: hybrid_zhu
+  - _self_
+
+run_name: zhuLinear_mcnc
+dataset_cfg: cfg/data/mcnc_zhu10.yaml
+
+policy:
+  type: reinforce
+head:
+  type: mlp
+  hidden_dims: [32]
+value:
+  type: mlp
+  input: zhu10
+  hidden_dims: [32]
+
+reward:
+  type: linear
+  c_size: 0.5
+  c_depth: 0.5
+
+num_steps: 20
+available_actions: [0, 1, 2, 3, 4]
+episodes: 200
+eval_every: 50
+terminal_reward: false
+
+seed: 0
+
+gamma: 0.9
+policy_learning_rate: 8e-4
+value_learning_rate: 3e-3
+baseline: zhu_resyn2
+baseline_scale: 1.0
+entropy_beta: 0.0
+clip_grad_norm_policy: null
+clip_grad_norm_value: null
+normalize_returns: false
+
+paper_mode:
+  per_circuit_mode: true
+  num_runs: 10
+  infer_rollouts: 10

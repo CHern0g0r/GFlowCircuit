@@ -13,7 +13,14 @@ from src.algorithms.gflownet_tb.sampler import sample_tb_trajectory
 from src.algorithms.reinforce import ReinforcePolicy
 from src.algorithms.reinforce.episode import run_reinforce_episode
 from src.baselines.resyn2 import build_resyn2_cache
-from src.models import REWARD_TYPES, encoder_factory, head_factory, prepare_encoder_config, value_factory, value_input_dim
+from src.models import (
+    reward_class_factory,
+    encoder_factory,
+    head_factory,
+    prepare_encoder_config,
+    value_factory,
+    value_input_dim,
+)
 from src.utils import get_obs_dim_and_num_actions, normalize_available_actions
 
 
@@ -111,7 +118,7 @@ def _load_policy(
     obs_dim, num_actions, node_dim, edge_dim = get_obs_dim_and_num_actions(num_steps, str(circuit_path))
     available_actions = normalize_available_actions(OmegaConf.select(cfg, "available_actions"), num_actions)
     reward_type = str(cfg["reward"]["type"])
-    reward_class = REWARD_TYPES[reward_type]
+    reward_class = reward_class_factory(cfg["reward"])
     algorithm_name = _get_algorithm_name(cfg)
 
     enc, head = _build_backbone(

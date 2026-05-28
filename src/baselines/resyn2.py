@@ -13,6 +13,13 @@ OBS_REWARD_IDX = 4
 RESYN2_ACTION_SEQUENCE = [0, 1, 2, 0, 1, 3, 0, 4, 3, 0]
 
 
+def _repeat_resyn2_sequence(total_ops: int) -> list[int]:
+    if total_ops <= 0:
+        raise ValueError("total_ops must be positive")
+    repeats = (int(total_ops) + len(RESYN2_ACTION_SEQUENCE) - 1) // len(RESYN2_ACTION_SEQUENCE)
+    return (RESYN2_ACTION_SEQUENCE * repeats)[: int(total_ops)]
+
+
 def get_size(obs: Observation) -> int:
     return int(obs.obs_tensor[OBS_SIZE_IDX])
 
@@ -28,7 +35,7 @@ def _play_resyn2_reference(
     action_sequence: list[int] | None = None,
 ) -> tuple[float, float]:
     """Run fixed resyn2 actions; return (sum of per-step custom rewards, custom terminal reward)."""
-    seq = RESYN2_ACTION_SEQUENCE if action_sequence is None else action_sequence
+    seq = _repeat_resyn2_sequence(num_steps) if action_sequence is None else action_sequence
     game = pyspiel.load_game("circuit", {"num_steps": int(num_steps), "file_path": file_path})
     state = game.new_initial_state()
     obs0 = Observation.from_state(state)
@@ -57,8 +64,8 @@ def _play_resyn2_reference(
     return float(total_custom), float(final_step)
 
 
-def _resyn2_average_gain_per_step(file_path: str, objective: str = "size", total_ops: int = 20) -> float:
-    """Compute Zhu baseline: average gain per operation over 2x resyn2 (20 ops)."""
+def _resyn2_average_reward_per_step(file_path: str, reward_class: type, total_ops: int = 20) -> float:
+    """Compute Zhu baseline: average custom reward per operation over 2x resyn2."""
     if total_ops <= 0:
         raise ValueError("total_ops must be positive")
 
@@ -67,28 +74,23 @@ def _resyn2_average_gain_per_step(file_path: str, objective: str = "size", total
     obs0 = Observation.from_state(state)
     initial_size = get_size(obs0)
     initial_depth = get_depth(obs0)
+    reward_func = reward_class(initial_size, initial_depth)
 
-    seq = (RESYN2_ACTION_SEQUENCE * ((total_ops + len(RESYN2_ACTION_SEQUENCE) - 1) // len(RESYN2_ACTION_SEQUENCE)))[
-        :total_ops
-    ]
+    total_reward = 0.0
+    seq = _repeat_resyn2_sequence(total_ops)
     for action in seq:
         if state.is_terminal():
             break
         if action not in state.legal_actions():
             break
+        obs = Observation.from_state(state)
+        prev_size = get_size(obs)
+        prev_depth = get_depth(obs)
         state.apply_action(action)
+        next_obs = Observation.from_state(state)
+        total_reward += float(reward_func(get_size(next_obs), get_depth(next_obs), prev_size, prev_depth))
 
-    final_obs = Observation.from_state(state)
-    final_size = get_size(final_obs)
-    final_depth = get_depth(final_obs)
-    if objective == "size":
-        total_gain = (initial_size - final_size) / max(1, initial_size)
-    elif objective == "depth":
-        total_gain = (initial_depth - final_depth) / max(1, initial_depth)
-    else:
-        raise ValueError(f"Unsupported objective for Zhu baseline: {objective}")
-
-    return float(total_gain / total_ops)
+    return float(total_reward / total_ops)
 
 
 def evaluate_resyn2_variants(file_path: str) -> dict[str, dict[str, int | float]]:
@@ -104,9 +106,7 @@ def evaluate_resyn2_variants(file_path: str) -> dict[str, dict[str, int | float]
         obs0 = Observation.from_state(state)
         initial_size = get_size(obs0)
         initial_depth = get_depth(obs0)
-        seq = (RESYN2_ACTION_SEQUENCE * ((steps + len(RESYN2_ACTION_SEQUENCE) - 1) // len(RESYN2_ACTION_SEQUENCE)))[
-            :steps
-        ]
+        seq = _repeat_resyn2_sequence(steps)
         for action in seq:
             if state.is_terminal():
                 break
@@ -179,9 +179,9 @@ def build_resyn2_cache(
             "zhu_reward_baseline_per_step": 0.0,
         }
         if baseline == "zhu_resyn2":
-            entry["zhu_reward_baseline_per_step"] = _resyn2_average_gain_per_step(
+            entry["zhu_reward_baseline_per_step"] = _resyn2_average_reward_per_step(
                 file_path=file_path,
-                objective="size",
+                reward_class=reward_class,
                 total_ops=20,
             )
             entry["zhu_reward_baseline_scale"] = float(baseline_scale)

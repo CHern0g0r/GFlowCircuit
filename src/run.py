@@ -19,7 +19,7 @@ from src.utils import (
     train_test_split,
 )
 from src.models import (
-    REWARD_TYPES,
+    reward_class_factory,
     encoder_factory,
     head_factory,
     prepare_encoder_config,
@@ -161,7 +161,7 @@ def main(cfg: DictConfig) -> None:
     )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    reward_class = REWARD_TYPES[cfg.reward.type]
+    reward_class = reward_class_factory(cfg.reward)
     algorithm_name = _get_algorithm_name(cfg)
 
     use_tb = OmegaConf.select(cfg, "logging.tensorboard")
