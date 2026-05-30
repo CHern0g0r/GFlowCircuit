@@ -11,6 +11,7 @@ from .rewards import (
     LinearReward,
     ZhuSizeReward,
     DiffOfProductReward,
+    DrillsSizeDepthReward,
 )
 from .Linear import HybridEncoder, IdEncoder, LinearHead, MLPHead, ValueMLP, VectorMLPEncoder
 from .GCN import GCNEncoder
@@ -25,6 +26,7 @@ REWARD_TYPES = {
     "diff_of_product": DiffOfProductReward,
     "linear": LinearReward,
     "zhu_size": ZhuSizeReward,
+    "drills_size_depth": DrillsSizeDepthReward,
 }
 
 def reward_class_factory(reward_cfg: dict) -> type:

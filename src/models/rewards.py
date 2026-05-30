@@ -68,6 +68,49 @@ class ProductOfDiffReward:
         )
 
 
+class DrillsSizeDepthReward(Reward):
+    """DRiLLS reward table adapted to size/depth circuit metrics."""
+
+    def __init__(
+        self,
+        initial_size: int,
+        initial_depth: int,
+        depth_constraint_ratio: float = 1.0,
+    ):
+        self.initial_size = int(initial_size)
+        self.initial_depth = int(initial_depth)
+        self.depth_constraint_ratio = float(depth_constraint_ratio)
+        self.depth_constraint = float(self.initial_depth) * self.depth_constraint_ratio
+        self.last_size_delta = 0
+        self.last_depth_delta = 0
+        self.last_constraint_met = False
+
+    @staticmethod
+    def _sign_improvement(previous: int, current: int) -> int:
+        if current < previous:
+            return 1
+        if current == previous:
+            return 0
+        return -1
+
+    def __call__(self, size: int, depth: int, prev_size: int, prev_depth: int) -> float:
+        size_improvement = self._sign_improvement(int(prev_size), int(size))
+        depth_improvement = self._sign_improvement(int(prev_depth), int(depth))
+        constraint_met = float(depth) <= self.depth_constraint
+
+        self.last_size_delta = size_improvement
+        self.last_depth_delta = depth_improvement
+        self.last_constraint_met = bool(constraint_met)
+
+        if constraint_met:
+            return float({1: 3, 0: 0, -1: -1}[size_improvement])
+        if depth_improvement == 1:
+            return float({1: 3, 0: 2, -1: 1}[size_improvement])
+        if depth_improvement == 0:
+            return float({1: 2, 0: 0, -1: -2}[size_improvement])
+        return float({1: -1, 0: -2, -1: -3}[size_improvement])
+
+
 class DiffOfProductReward(Reward):
     def __init__(self,
                  initial_size: int,
@@ -112,4 +155,3 @@ class LinearReward(Reward):
         )
         self.last_gain = float(gain)
         return gain - self.baseline_scale * self.baseline_per_step
-

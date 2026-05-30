@@ -9,6 +9,7 @@ import torch
 from hydra.utils import to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 
+from src.algorithms.drills_a2c import DrillsA2CPolicy, DrillsA2CTrainer
 from src.algorithms.gflownet_tb import TBGFlowNetPolicy, TBGFlowNetTrainer
 from src.algorithms.reinforce import ReinforcePolicy, ReinforceTrainer
 from src.baselines.resyn2 import build_resyn2_cache
@@ -92,6 +93,52 @@ def _build_models(
             ),
             value_cfg=value_cfg_dict,
         )
+    return policy, value_net
+
+
+def _build_drills_a2c_models(
+    cfg: DictConfig,
+    obs_dim: int,
+    node_dim: int,
+    edge_dim: int,
+    num_actions: int,
+    available_actions: list[int] | None,
+):
+    encoder_cfg = OmegaConf.to_container(cfg.encoder, resolve=True)
+    if not isinstance(encoder_cfg, dict):
+        raise TypeError("encoder config must resolve to a mapping")
+    encoder_cfg = prepare_encoder_config(
+        encoder_cfg,
+        obs_dim=obs_dim,
+        node_dim=node_dim,
+        edge_dim=edge_dim,
+        num_actions=num_actions,
+        available_actions=available_actions,
+    )
+
+    enc = encoder_factory(encoder_cfg=encoder_cfg)
+    head = head_factory(
+        obs_dim=encoder_cfg["out_dim"],
+        num_actions=num_actions,
+        head_cfg=cfg.head,
+    )
+    policy = DrillsA2CPolicy(encoder=enc, head=head, num_actions=num_actions)
+
+    value_cfg = OmegaConf.select(cfg, "value")
+    if value_cfg is None:
+        raise ValueError("drills_a2c requires a value network config")
+    value_cfg_dict = OmegaConf.to_container(value_cfg, resolve=True)
+    if not isinstance(value_cfg_dict, dict):
+        raise TypeError("value config must resolve to a mapping")
+    value_net = value_factory(
+        obs_dim=value_input_dim(
+            obs_dim=obs_dim,
+            num_actions=num_actions,
+            available_actions=available_actions,
+            value_cfg=value_cfg_dict,
+        ),
+        value_cfg=value_cfg_dict,
+    )
     return policy, value_net
 
 
@@ -250,6 +297,72 @@ def main(cfg: DictConfig) -> None:
                 seed=run_seed,
                 policy=policy,
                 value_net=None,
+            )
+            runs.append(
+                {
+                    "run_idx": run_idx,
+                    "seed": run_seed,
+                    "history": train_out["history"],
+                    "final_eval": final_eval,
+                    "checkpoint_path": str(ckpt_path),
+                }
+            )
+        elif algorithm_name == "drills_a2c":
+            policy, value_net = _build_drills_a2c_models(
+                cfg,
+                obs_dim=obs_dim,
+                node_dim=node_dim,
+                edge_dim=edge_dim,
+                num_actions=num_actions,
+                available_actions=available_actions,
+            )
+            policy = policy.to(device)
+            value_net = value_net.to(device)
+
+            trainer = DrillsA2CTrainer(
+                policy=policy,
+                value_network=value_net,
+                reward_class=reward_class,
+                train_circuits=train_circuits,
+                test_circuits=test_circuits,
+                resyn2_baselines=resyn2_baselines,
+                device=device,
+                seed=run_seed,
+                log_dir=(tb_log_dir / f"run_{run_idx}") if tb_log_dir is not None else None,
+                available_actions=available_actions,
+            )
+
+            drills_cfg = OmegaConf.select(cfg, "algorithm.drills")
+            if drills_cfg is None:
+                drills_cfg = OmegaConf.select(cfg, "drills")
+            if drills_cfg is None:
+                drills_cfg = OmegaConf.create({})
+            trajectories_per_episode = int(OmegaConf.select(drills_cfg, "trajectories_per_episode") or 1)
+            value_loss_coef = float(OmegaConf.select(drills_cfg, "value_loss_coef") or 0.5)
+            drills_entropy_beta = float(OmegaConf.select(drills_cfg, "entropy_beta") or 0.0)
+            drills_clip_grad_norm = OmegaConf.select(drills_cfg, "clip_grad_norm")
+            normalize_advantages = bool(OmegaConf.select(drills_cfg, "normalize_advantages") or False)
+
+            train_out = trainer.train(
+                episodes=int(cfg.episodes),
+                num_steps=int(cfg.num_steps),
+                eval_every=int(cfg.eval_every),
+                learning_rate=float(cfg.learning_rate),
+                gamma=float(cfg.gamma),
+                trajectories_per_episode=trajectories_per_episode,
+                value_loss_coef=value_loss_coef,
+                entropy_beta=drills_entropy_beta,
+                clip_grad_norm=float(drills_clip_grad_norm) if drills_clip_grad_norm is not None else None,
+                normalize_advantages=normalize_advantages,
+                best_of_eval_rollouts=best_of_rollouts,
+            )
+            final_eval = trainer.evaluate(num_steps=int(cfg.num_steps), best_of_rollouts=best_of_rollouts)
+            ckpt_path = _save_run_checkpoint(
+                output_dir=output_dir,
+                run_idx=run_idx,
+                seed=run_seed,
+                policy=policy,
+                value_net=value_net,
             )
             runs.append(
                 {

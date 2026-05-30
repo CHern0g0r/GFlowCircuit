@@ -1,0 +1,40 @@
+defaults:
+  - default
+  - algorithm: drills_a2c
+  - override encoder: hybrid_zhu
+  - _self_
+
+run_name: drills_a2c_zhu
+dataset_cfg: cfg/data/mcnc_zhu10.yaml
+
+policy:
+  type: reinforce
+head:
+  type: mlp
+  hidden_dims: [32]
+value:
+  type: mlp
+  input: zhu10
+  hidden_dims: [10]
+
+reward:
+  type: drills_size_depth
+  depth_constraint_ratio: ${algorithm.drills.depth_constraint_ratio}
+
+num_steps: 20
+available_actions: [0, 1, 2, 3, 4]
+episodes: 200
+eval_every: 50
+
+seed: 0
+gamma: 0.99
+learning_rate: 0.01
+baseline: null
+
+paper_mode:
+  per_circuit_mode: true
+  num_runs: 10
+  infer_rollouts: 10
+
+json_out: ${output_dir}/drills_a2c_report.json
+

@@ -1,0 +1,49 @@
+defaults:
+  - default
+  - algorithm: drills_a2c
+  - override encoder: hybrid_zhu
+  - _self_
+
+run_name: drillsDOP
+dataset_cfg: cfg/data/zhu2020/i10.yaml
+
+policy:
+  type: reinforce
+head:
+  type: mlp
+  hidden_dims: [32]
+value:
+  type: mlp
+  input: zhu10
+  hidden_dims: [32]
+
+reward:
+  type: diff_of_product
+  c_size: 1
+  c_depth: 1
+
+num_steps: 20
+available_actions: [0, 1, 2, 3, 4]
+episodes: 200
+eval_every: 50
+train_ratio: 0.75
+
+seed: 0
+learning_rate: 0.001
+gamma: 0.9
+baseline: zhu_resyn2
+baseline_scale: 1.0
+
+drills:
+  trajectories_per_episode: 1
+  value_loss_coef: 0.5
+  entropy_beta: 0.0
+  clip_grad_norm: null
+  normalize_advantages: false
+
+paper_mode:
+  per_circuit_mode: true
+  num_runs: 10
+  infer_rollouts: 10
+
+json_out: ${output_dir}/drills_a2c_report.json
