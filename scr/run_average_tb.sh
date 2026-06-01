@@ -14,7 +14,7 @@ elif command -v conda >/dev/null 2>&1; then
   conda activate "${conda_env}"
 fi
 
-date_root="../outputs/2026-05-25"
+date_root="../outputs/2026-05-30"
 output_root="${date_root}/tb_aggregated"
 
 declare -A best_runs=()

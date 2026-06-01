@@ -1,0 +1,41 @@
+defaults:
+  - default
+  - algorithm: gflownet_tb
+  - override encoder: hybrid_zhu
+  - _self_
+
+run_name: tbDOP
+dataset_cfg: cfg/data/zhu2020/i10.yaml
+
+policy:
+  type: reinforce
+
+head:
+  type: mlp
+  hidden_dims: [32]
+
+reward:
+  type: diff_of_product
+  c_size: 1
+  c_depth: 1
+
+num_steps: 20
+available_actions: [0, 1, 2, 3, 4]
+episodes: 200
+eval_every: 50
+train_ratio: 0.75
+seed: 0
+learning_rate: 0.001
+
+tb:
+  trajectories_per_episode: 4
+  reward_alpha: 4.0
+  reward_eps: 1.0e-8
+  reward_improvement_clip: 2.0
+
+paper_mode:
+  per_circuit_mode: true
+  num_runs: 10
+  infer_rollouts: 4
+
+json_out: ${output_dir}/gflownet_tb_report.json
