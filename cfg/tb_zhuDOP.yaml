@@ -4,7 +4,7 @@ defaults:
   - override encoder: hybrid_zhu
   - _self_
 
-run_name: tbDOP
+run_name: tbzhuDOP
 dataset_cfg: cfg/data/zhu2020/i10.yaml
 
 policy:
@@ -36,6 +36,6 @@ tb:
 paper_mode:
   per_circuit_mode: true
   num_runs: 10
-  infer_rollouts: 4
+  infer_rollouts: 10
 
 json_out: ${output_dir}/gflownet_tb_report.json

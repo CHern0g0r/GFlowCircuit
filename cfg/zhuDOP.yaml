@@ -4,8 +4,8 @@ defaults:
   - override encoder: hybrid_zhu
   - _self_
 
-run_name: zhuDOP_mcnc
-dataset_cfg: cfg/data/mcnc_zhu10.yaml
+run_name: zhuDOP
+dataset_cfg: cfg/data/zhu2020/i10.yaml
 
 policy:
   type: reinforce
@@ -26,9 +26,11 @@ num_steps: 20
 available_actions: [0, 1, 2, 3, 4]
 episodes: 200
 eval_every: 50
+train_ratio: 0.75
 terminal_reward: false
 
 seed: 0
+learning_rate: 0.001
 
 gamma: 0.9
 policy_learning_rate: 8e-4
