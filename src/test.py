@@ -8,6 +8,8 @@ from statistics import mean
 import torch
 from omegaconf import DictConfig, OmegaConf
 
+from src.algorithms.drills_a2c import DrillsA2CPolicy
+from src.algorithms.drills_a2c.sampler import sample_drills_a2c_trajectory
 from src.algorithms.gflownet_tb import TBGFlowNetPolicy
 from src.algorithms.gflownet_tb.sampler import sample_tb_trajectory
 from src.algorithms.reinforce import ReinforcePolicy
@@ -132,6 +134,23 @@ def _load_policy(
     value_net = None
     if algorithm_name == "gflownet_tb":
         policy = TBGFlowNetPolicy(encoder=enc, head=head, num_actions=num_actions).to(device)
+    elif algorithm_name == "drills_a2c":
+        policy = DrillsA2CPolicy(encoder=enc, head=head, num_actions=num_actions).to(device)
+        value_cfg = OmegaConf.select(cfg, "value")
+        if value_cfg is None:
+            raise ValueError("drills_a2c requires a value network config")
+        value_cfg_dict = OmegaConf.to_container(value_cfg, resolve=True)
+        if not isinstance(value_cfg_dict, dict):
+            raise TypeError("value config must resolve to a mapping")
+        value_net = value_factory(
+            obs_dim=value_input_dim(
+                obs_dim=obs_dim,
+                num_actions=num_actions,
+                available_actions=available_actions,
+                value_cfg=value_cfg_dict,
+            ),
+            value_cfg=value_cfg_dict,
+        ).to(device)
     elif algorithm_name == "reinforce":
         policy = ReinforcePolicy(encoder=enc, head=head, num_actions=num_actions).to(device)
         value_cfg = OmegaConf.select(cfg, "value")
@@ -280,6 +299,52 @@ def main() -> None:
             "mean_final_qor": mean(qors) if qors else None,
             "mean_final_return": mean(returns) if returns else None,
             "mean_comparable_return": mean(comparable_returns) if comparable_returns else None,
+        }
+    elif algorithm_name == "drills_a2c":
+        trajectories = []
+        for _ in range(max(1, int(args.num_samples))):
+            trajectories.append(
+                sample_drills_a2c_trajectory(
+                    file_path=str(circuit_path),
+                    num_steps=num_steps,
+                    policy=policy,
+                    reward_class=reward_class,
+                    sample_actions=True,
+                    available_actions=available_actions,
+                )
+            )
+
+        sizes = [int(t.final_size) for t in trajectories]
+        depths = [int(t.final_depth) for t in trajectories]
+        qors = [int(t.final_size) * int(t.final_depth) for t in trajectories]
+        returns = [float(t.final_return) for t in trajectories]
+        comparable_returns = [float(t.comparable_return) for t in trajectories]
+        feasible_depths = [bool(t.feasible_depth) for t in trajectories]
+        initial_size = int(trajectories[0].initial_size) if trajectories else 0
+        initial_depth = int(trajectories[0].initial_depth) if trajectories else 0
+
+        result = {
+            "algorithm": algorithm_name,
+            "checkpoint": str(checkpoint_path),
+            "config": str(config_path),
+            "circuit": str(circuit_path),
+            "num_samples": len(trajectories),
+            "num_steps": num_steps,
+            "reward_type": reward_type,
+            "available_actions": available_actions,
+            "initial_size": initial_size,
+            "initial_depth": initial_depth,
+            "final_sizes": sizes,
+            "final_depths": depths,
+            "final_returns": returns,
+            "comparable_returns": comparable_returns,
+            "feasible_depths": feasible_depths,
+            "mean_final_size": mean(sizes) if sizes else None,
+            "mean_final_depth": mean(depths) if depths else None,
+            "mean_final_qor": mean(qors) if qors else None,
+            "mean_final_return": mean(returns) if returns else None,
+            "mean_comparable_return": mean(comparable_returns) if comparable_returns else None,
+            "mean_feasible_depth_rate": mean([1.0 if x else 0.0 for x in feasible_depths]) if feasible_depths else None,
         }
     elif algorithm_name == "reinforce":
         baseline = OmegaConf.select(cfg, "baseline")

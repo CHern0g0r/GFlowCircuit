@@ -104,6 +104,20 @@ def _sample_trajectories(
                     **tb_params,
                 )
             metrics.append((int(trajectory.final_size), int(trajectory.final_depth)))
+    elif algorithm_name == "drills_a2c":
+        from src.algorithms.drills_a2c.sampler import sample_drills_a2c_trajectory
+
+        for _ in range(max(1, int(num_samples))):
+            with torch.no_grad():
+                trajectory = sample_drills_a2c_trajectory(
+                    file_path=str(circuit_path),
+                    num_steps=num_steps,
+                    policy=policy,
+                    reward_class=reward_class,
+                    sample_actions=True,
+                    available_actions=available_actions,
+                )
+            metrics.append((int(trajectory.final_size), int(trajectory.final_depth)))
     elif algorithm_name == "reinforce":
         from src.algorithms.reinforce.episode import run_reinforce_episode
         from src.baselines.resyn2 import build_resyn2_cache
