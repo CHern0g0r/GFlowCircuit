@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import numpy as np
 import re
 from pathlib import Path
 
@@ -81,6 +82,8 @@ def _sample_trajectories(
     algorithm_name = loaded["algorithm"]
     policy = loaded["policy"]
     reward_class = loaded["reward_class"]
+    mo_reward_class = loaded.get("mo_reward_class")
+    pcn_meta = loaded.get("pcn", {})
     available_actions = loaded["available_actions"]
 
     torch.manual_seed(int(seed))
@@ -177,6 +180,49 @@ def _sample_trajectories(
                     available_actions=available_actions,
                 )
             metrics.append((int(trajectory.final_size), int(trajectory.final_depth)))
+    elif algorithm_name == "pcn":
+        from src.algorithms.pcn.sampler import sample_pcn_trajectory
+
+        pcn_cfg = OmegaConf.select(cfg, "pcn")
+        if pcn_cfg is None:
+            pcn_cfg = OmegaConf.select(cfg, "algorithm.pcn")
+        if pcn_cfg is None:
+            pcn_cfg = OmegaConf.create({})
+        desired_return_clip = bool(OmegaConf.select(pcn_cfg, "desired_return_clip") or False)
+        target_returns = pcn_meta.get("archive_target_returns", []) if isinstance(pcn_meta, dict) else []
+        target_horizons = pcn_meta.get("archive_target_horizons", []) if isinstance(pcn_meta, dict) else []
+        rng = np.random.default_rng(int(seed))
+        if target_returns and target_horizons:
+            for target_return, target_horizon in zip(target_returns, target_horizons):
+                with torch.no_grad():
+                    trajectory = sample_pcn_trajectory(
+                        file_path=str(circuit_path),
+                        num_steps=num_steps,
+                        policy=policy,
+                        mo_reward_class=mo_reward_class,
+                        sample_actions=False,
+                        rng=rng,
+                        available_actions=available_actions,
+                        desired_return=torch.tensor(target_return, dtype=torch.float32),
+                        desired_horizon=float(target_horizon),
+                        desired_return_clip=desired_return_clip,
+                        gamma=float(cfg.get("gamma", 1.0)),
+                    )
+                metrics.append((int(trajectory.final_size), int(trajectory.final_depth)))
+        else:
+            for _ in range(max(1, int(num_samples))):
+                with torch.no_grad():
+                    trajectory = sample_pcn_trajectory(
+                        file_path=str(circuit_path),
+                        num_steps=num_steps,
+                        policy=policy,
+                        mo_reward_class=mo_reward_class,
+                        sample_actions=False,
+                        rng=rng,
+                        available_actions=available_actions,
+                        gamma=float(cfg.get("gamma", 1.0)),
+                    )
+                metrics.append((int(trajectory.final_size), int(trajectory.final_depth)))
     else:
         raise ValueError(f"Unknown algorithm: {algorithm_name}")
     return metrics

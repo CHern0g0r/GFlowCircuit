@@ -13,6 +13,17 @@ from .rewards import (
     DiffOfProductReward,
     DrillsSizeDepthReward,
 )
+from .mo_rewards import (
+    MO_REWARD_TYPES,
+    MultiObjectiveReward,
+    SizeDepthImprovementReward,
+    crowding_distance,
+    discounted_vector_returns,
+    dominates_max,
+    hypervolume_2d_max,
+    mo_reward_factory,
+    non_dominated_mask_max,
+)
 from .Linear import HybridEncoder, IdEncoder, LinearHead, MLPHead, ValueMLP, VectorMLPEncoder
 from .GCN import GCNEncoder
 from .zhuGCN import ZhuGCNEncoder
