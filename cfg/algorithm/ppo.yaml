@@ -1,0 +1,12 @@
+name: ppo
+ppo:
+  rollout_steps: 200
+  ppo_epochs: 20
+  minibatch_size: 64
+  clip_eps: 0.2
+  value_loss_coef: 0.5
+  entropy_beta: 0.0
+  normalize_advantages: true
+  clip_grad_norm: null
+  gae_lambda: 0.95
+
