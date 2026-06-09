@@ -145,6 +145,38 @@ def _sample_trajectories(
                     available_actions=available_actions,
                 )
             metrics.append((int(episode["final_size"]), int(episode["final_depth"])))
+    elif algorithm_name == "ppo":
+        from src.algorithms.ppo.sampler import sample_ppo_trajectory
+        from src.baselines.resyn2 import build_resyn2_cache
+
+        value_net = loaded["value_net"]
+        if value_net is None:
+            raise ValueError("ppo sampling requires a value network")
+
+        baseline = OmegaConf.select(cfg, "baseline")
+        baseline_scale = float(OmegaConf.select(cfg, "baseline_scale") or 1.0)
+        resyn2_baselines = build_resyn2_cache(
+            circuits=[str(circuit_path)],
+            num_steps=int(num_steps),
+            reward_class=reward_class,
+            baseline=baseline,
+            baseline_scale=baseline_scale,
+        )
+        resyn2_baseline = resyn2_baselines[str(circuit_path)]
+        for _ in range(max(1, int(num_samples))):
+            with torch.no_grad():
+                trajectory = sample_ppo_trajectory(
+                    file_path=str(circuit_path),
+                    num_steps=num_steps,
+                    policy=policy,
+                    value_network=value_net,
+                    reward_class=reward_class,
+                    sample_actions=True,
+                    baseline=baseline,
+                    resyn2_baseline=resyn2_baseline,
+                    available_actions=available_actions,
+                )
+            metrics.append((int(trajectory.final_size), int(trajectory.final_depth)))
     else:
         raise ValueError(f"Unknown algorithm: {algorithm_name}")
     return metrics

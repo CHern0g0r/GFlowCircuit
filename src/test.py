@@ -12,6 +12,8 @@ from src.algorithms.drills_a2c import DrillsA2CPolicy
 from src.algorithms.drills_a2c.sampler import sample_drills_a2c_trajectory
 from src.algorithms.gflownet_tb import TBGFlowNetPolicy
 from src.algorithms.gflownet_tb.sampler import sample_tb_trajectory
+from src.algorithms.ppo import PPOPolicy
+from src.algorithms.ppo.sampler import sample_ppo_trajectory
 from src.algorithms.reinforce import ReinforcePolicy
 from src.algorithms.reinforce.episode import run_reinforce_episode
 from src.baselines.resyn2 import build_resyn2_cache
@@ -167,6 +169,23 @@ def _load_policy(
                 ),
                 value_cfg=value_cfg_dict,
             ).to(device)
+    elif algorithm_name == "ppo":
+        policy = PPOPolicy(encoder=enc, head=head, num_actions=num_actions).to(device)
+        value_cfg = OmegaConf.select(cfg, "value")
+        if value_cfg is None:
+            raise ValueError("ppo requires a value network config")
+        value_cfg_dict = OmegaConf.to_container(value_cfg, resolve=True)
+        if not isinstance(value_cfg_dict, dict):
+            raise TypeError("value config must resolve to a mapping")
+        value_net = value_factory(
+            obs_dim=value_input_dim(
+                obs_dim=obs_dim,
+                num_actions=num_actions,
+                available_actions=available_actions,
+                value_cfg=value_cfg_dict,
+            ),
+            value_cfg=value_cfg_dict,
+        ).to(device)
     else:
         raise ValueError(f"Unknown algorithm: {algorithm_name}")
 
@@ -184,6 +203,7 @@ def _load_policy(
     return {
         "algorithm": algorithm_name,
         "policy": policy,
+        "value_net": value_net,
         "available_actions": available_actions,
         "reward_class": reward_class,
         "reward_type": reward_type,
@@ -387,6 +407,68 @@ def main() -> None:
             "config": str(config_path),
             "circuit": str(circuit_path),
             "num_samples": len(episodes),
+            "num_steps": num_steps,
+            "reward_type": reward_type,
+            "baseline": baseline,
+            "available_actions": available_actions,
+            "initial_size": initial_size,
+            "initial_depth": initial_depth,
+            "final_sizes": sizes,
+            "final_depths": depths,
+            "final_returns": returns,
+            "comparable_returns": comparable_returns,
+            "mean_final_size": mean(sizes) if sizes else None,
+            "mean_final_depth": mean(depths) if depths else None,
+            "mean_final_qor": mean(qors) if qors else None,
+            "mean_final_return": mean(returns) if returns else None,
+            "mean_comparable_return": mean(comparable_returns) if comparable_returns else None,
+        }
+    elif algorithm_name == "ppo":
+        value_net = loaded["value_net"]
+        if value_net is None:
+            raise ValueError("ppo sampling requires a value network")
+
+        baseline = OmegaConf.select(cfg, "baseline")
+        baseline_scale = float(OmegaConf.select(cfg, "baseline_scale") or 1.0)
+        resyn2_baselines = build_resyn2_cache(
+            circuits=[str(circuit_path)],
+            num_steps=int(num_steps),
+            reward_class=reward_class,
+            baseline=baseline,
+            baseline_scale=baseline_scale,
+        )
+        resyn2_baseline = resyn2_baselines[str(circuit_path)]
+
+        trajectories = []
+        for _ in range(max(1, int(args.num_samples))):
+            trajectories.append(
+                sample_ppo_trajectory(
+                    file_path=str(circuit_path),
+                    num_steps=num_steps,
+                    policy=policy,
+                    value_network=value_net,
+                    reward_class=reward_class,
+                    sample_actions=True,
+                    baseline=baseline,
+                    resyn2_baseline=resyn2_baseline,
+                    available_actions=available_actions,
+                )
+            )
+
+        sizes = [int(t.final_size) for t in trajectories]
+        depths = [int(t.final_depth) for t in trajectories]
+        qors = [int(t.final_size) * int(t.final_depth) for t in trajectories]
+        returns = [float(t.final_return) for t in trajectories]
+        comparable_returns = [float(t.comparable_return) for t in trajectories]
+        initial_size = int(trajectories[0].initial_size) if trajectories else 0
+        initial_depth = int(trajectories[0].initial_depth) if trajectories else 0
+
+        result = {
+            "algorithm": algorithm_name,
+            "checkpoint": str(checkpoint_path),
+            "config": str(config_path),
+            "circuit": str(circuit_path),
+            "num_samples": len(trajectories),
             "num_steps": num_steps,
             "reward_type": reward_type,
             "baseline": baseline,
