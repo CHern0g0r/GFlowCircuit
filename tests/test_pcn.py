@@ -160,6 +160,44 @@ class PCNTest(unittest.TestCase):
         self.assertEqual(len(meta["archive_target_returns"]), 1)
         self.assertEqual(meta["archive_target_returns"][0], [1.0, 1.0])
 
+    def test_archive_uses_unique_non_dominated_training_targets(self) -> None:
+        archive = PCNArchive(capacity=8)
+        archive.add(_trajectory(torch.tensor([1.0, 1.0])))
+        archive.add(_trajectory(torch.tensor([1.0, 1.0]), action=1))
+        archive.add(_trajectory(torch.tensor([0.5, 0.5])))
+
+        targets = archive.unique_non_dominated_trajectories()
+        self.assertEqual(len(targets), 1)
+        self.assertTrue(torch.allclose(targets[0].return_vec, torch.tensor([1.0, 1.0])))
+
+        target = archive.sample_exploration_target(rng=np.random.default_rng(0))
+        self.assertIsNotNone(target)
+        assert target is not None
+        self.assertTrue(torch.allclose(target.desired_return, torch.tensor([1.0, 1.0])))
+
+    def test_archive_default_target_sampling_preserves_zero_sigma_behavior(self) -> None:
+        archive = PCNArchive(capacity=8)
+        archive.add(_trajectory(torch.tensor([1.0, 1.0])))
+        archive.add(_trajectory(torch.tensor([1.0, 1.0]), action=1))
+
+        target = archive.sample_exploration_target(rng=np.random.default_rng(0))
+        self.assertIsNotNone(target)
+        assert target is not None
+        self.assertTrue(torch.allclose(target.desired_return, torch.tensor([1.0, 1.0])))
+
+    def test_archive_target_sampling_jitters_zero_sigma_when_configured(self) -> None:
+        archive = PCNArchive(capacity=8, target_noise_scale=0.05, target_min_sigma=0.01)
+        archive.add(_trajectory(torch.tensor([1.0, 1.0])))
+        archive.add(_trajectory(torch.tensor([1.0, 1.0]), action=1))
+
+        target = archive.sample_exploration_target(rng=np.random.default_rng(0))
+        self.assertIsNotNone(target)
+        assert target is not None
+        delta = target.desired_return - torch.tensor([1.0, 1.0])
+        self.assertGreater(float(delta.max().item()), 0.0)
+        self.assertLessEqual(float(delta.max().item()), 0.05)
+        self.assertEqual(int(torch.count_nonzero(delta).item()), 1)
+
     def test_pcn_target_commands_expand_to_num_samples(self) -> None:
         rng = np.random.default_rng(0)
         commands = _pcn_target_commands(

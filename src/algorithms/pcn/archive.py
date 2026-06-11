@@ -17,13 +17,21 @@ class PCNArchive:
         gamma: float = 1.0,
         crowding_threshold: float = 0.2,
         duplicate_penalty: float = 1e-5,
+        target_noise_scale: float = 0.0,
+        target_min_sigma: float = 0.0,
     ) -> None:
         if int(capacity) <= 0:
             raise ValueError("PCN archive capacity must be positive")
+        if float(target_noise_scale) < 0.0:
+            raise ValueError("PCN target_noise_scale must be non-negative")
+        if float(target_min_sigma) < 0.0:
+            raise ValueError("PCN target_min_sigma must be non-negative")
         self.capacity = int(capacity)
         self.gamma = float(gamma)
         self.crowding_threshold = float(crowding_threshold)
         self.duplicate_penalty = float(duplicate_penalty)
+        self.target_noise_scale = float(target_noise_scale)
+        self.target_min_sigma = float(target_min_sigma)
         self.trajectories: list[PCNTrajectory] = []
 
     @staticmethod
@@ -76,10 +84,11 @@ class PCNArchive:
 
         nd_indices = torch.nonzero(nd_mask, as_tuple=False).flatten()
         seen: set[tuple[float, ...]] = set()
+        duplicate_score_penalty = float(scores.max().item() - scores.min().item()) + 1.0 + self.duplicate_penalty
         for idx in nd_indices.tolist():
             key = self._return_key(returns[int(idx)])
             if key in seen:
-                scores[int(idx)] -= 1.0 + self.duplicate_penalty
+                scores[int(idx)] -= duplicate_score_penalty
             else:
                 seen.add(key)
         return scores
@@ -95,6 +104,9 @@ class PCNArchive:
             seen.add(key)
             out.append(trajectory)
         return out
+
+    def unique_non_dominated_trajectories(self) -> list[PCNTrajectory]:
+        return self._unique_by_return(self.non_dominated_trajectories())
 
     def prune(self) -> None:
         if len(self.trajectories) <= self.capacity:
@@ -126,7 +138,7 @@ class PCNArchive:
         return out
 
     def sample_exploration_target(self, *, rng: np.random.Generator) -> PCNTarget | None:
-        nd = self.non_dominated_trajectories()
+        nd = self.unique_non_dominated_trajectories()
         if not nd:
             return None
         returns = torch.stack([traj.return_vec.detach().to(dtype=torch.float32, device="cpu") for traj in nd])
@@ -134,11 +146,14 @@ class PCNArchive:
         target_return = returns[base_idx].clone()
         objective_idx = int(rng.integers(0, target_return.numel()))
         sigma = float(torch.std(returns[:, objective_idx], unbiased=False).item())
-        target_return[objective_idx] += float(rng.uniform(0.0, sigma)) if sigma > 0.0 else 0.0
+        perturbation_range = sigma
+        if self.target_noise_scale > 0.0 and sigma <= self.target_min_sigma:
+            perturbation_range = self.target_noise_scale
+        target_return[objective_idx] += float(rng.uniform(0.0, perturbation_range)) if perturbation_range > 0.0 else 0.0
         return PCNTarget(desired_return=target_return, desired_horizon=float(nd[base_idx].horizon))
 
     def metadata(self, *, limit: int | None = None) -> dict[str, Any]:
-        nd = self._unique_by_return(self.non_dominated_trajectories())
+        nd = self.unique_non_dominated_trajectories()
         if limit is not None and int(limit) > 0 and len(nd) > int(limit):
             returns = torch.stack([t.return_vec.detach().to(dtype=torch.float32, device="cpu") for t in nd])
             keep = torch.argsort(crowding_distance(returns), descending=True)[: int(limit)]
@@ -146,7 +161,7 @@ class PCNArchive:
         return {
             "archive_size": len(self.trajectories),
             "nondominated_size": len(self.non_dominated_trajectories()),
-            "unique_nondominated_size": len(self._unique_by_return(self.non_dominated_trajectories())),
+            "unique_nondominated_size": len(self.unique_non_dominated_trajectories()),
             "archive_target_returns": [t.return_vec.detach().cpu().tolist() for t in nd],
             "archive_target_horizons": [int(t.horizon) for t in nd],
         }

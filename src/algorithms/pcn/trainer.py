@@ -34,6 +34,8 @@ class PCNTrainer:
         gamma: float = 1.0,
         crowding_threshold: float = 0.2,
         duplicate_penalty: float = 1e-5,
+        target_noise_scale: float = 0.0,
+        target_min_sigma: float = 0.0,
     ) -> None:
         self.policy = policy
         self.mo_reward_class = mo_reward_class
@@ -49,6 +51,8 @@ class PCNTrainer:
             gamma=float(gamma),
             crowding_threshold=float(crowding_threshold),
             duplicate_penalty=float(duplicate_penalty),
+            target_noise_scale=float(target_noise_scale),
+            target_min_sigma=float(target_min_sigma),
         )
         self._tb = TensorBoardLogger(log_dir) if log_dir is not None else None
 

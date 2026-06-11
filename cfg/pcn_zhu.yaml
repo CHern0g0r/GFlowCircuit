@@ -38,6 +38,8 @@ pcn:
   condition_scale: 2.0
   crowding_threshold: 0.2
   duplicate_penalty: 1.0e-5
+  target_noise_scale: 0.05
+  target_min_sigma: 0.01
   desired_return_clip: false
   eval_target_limit: 64
 

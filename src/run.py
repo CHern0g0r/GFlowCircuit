@@ -434,6 +434,8 @@ def main(cfg: DictConfig) -> None:
             batch_size = int(OmegaConf.select(pcn_cfg, "batch_size") or 128)
             crowding_threshold = float(OmegaConf.select(pcn_cfg, "crowding_threshold") or 0.2)
             duplicate_penalty = float(OmegaConf.select(pcn_cfg, "duplicate_penalty") or 1e-5)
+            target_noise_scale = float(OmegaConf.select(pcn_cfg, "target_noise_scale") or 0.0)
+            target_min_sigma = float(OmegaConf.select(pcn_cfg, "target_min_sigma") or 0.0)
             desired_return_clip = bool(OmegaConf.select(pcn_cfg, "desired_return_clip") or False)
             eval_target_limit_raw = OmegaConf.select(pcn_cfg, "eval_target_limit")
             eval_target_limit = int(eval_target_limit_raw) if eval_target_limit_raw is not None else None
@@ -452,6 +454,8 @@ def main(cfg: DictConfig) -> None:
                 gamma=float(cfg.gamma),
                 crowding_threshold=crowding_threshold,
                 duplicate_penalty=duplicate_penalty,
+                target_noise_scale=target_noise_scale,
+                target_min_sigma=target_min_sigma,
             )
             train_out = trainer.train(
                 episodes=int(cfg.episodes),
