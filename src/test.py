@@ -243,6 +243,14 @@ def _load_policy(
                 value_cfg=value_cfg_dict,
             ).to(device)
     elif algorithm_name == "ppo":
+        enc, head = _build_backbone(
+            cfg,
+            obs_dim=obs_dim,
+            node_dim=node_dim,
+            edge_dim=edge_dim,
+            num_actions=num_actions,
+            available_actions=available_actions,
+        )
         policy = PPOPolicy(encoder=enc, head=head, num_actions=num_actions).to(device)
         value_cfg = OmegaConf.select(cfg, "value")
         if value_cfg is None:
@@ -259,18 +267,6 @@ def _load_policy(
             ),
             value_cfg=value_cfg_dict,
         ).to(device)
-            value_cfg_dict = OmegaConf.to_container(value_cfg, resolve=True)
-            if not isinstance(value_cfg_dict, dict):
-                raise TypeError("value config must resolve to a mapping")
-            value_net = value_factory(
-                obs_dim=value_input_dim(
-                    obs_dim=obs_dim,
-                    num_actions=num_actions,
-                    available_actions=available_actions,
-                    value_cfg=value_cfg_dict,
-                ),
-                value_cfg=value_cfg_dict,
-            ).to(device)
     elif algorithm_name == "pcn":
         policy = _build_pcn_policy(
             cfg,

@@ -5,6 +5,7 @@ import sys
 import unittest
 from pathlib import Path
 
+import numpy as np
 import torch
 from torch import nn
 from torch_geometric.data import Data
@@ -25,6 +26,7 @@ from src.models.mo_rewards import (
     hypervolume_2d_max,
     non_dominated_mask_max,
 )
+from src.sample_exp import _pcn_target_commands
 from src.utils import Observation
 
 
@@ -145,6 +147,47 @@ class PCNTest(unittest.TestCase):
         batch = archive.sample_datapoints(batch_size=2, rng=rng)
         self.assertEqual(len(batch), 2)
         self.assertEqual(batch[0].desired_return.shape[0], 2)
+
+    def test_archive_metadata_deduplicates_targets(self) -> None:
+        archive = PCNArchive(capacity=8)
+        archive.add(_trajectory(torch.tensor([1.0, 1.0])))
+        archive.add(_trajectory(torch.tensor([1.0, 1.0]), action=1))
+        archive.add(_trajectory(torch.tensor([0.5, 0.5])))
+
+        meta = archive.metadata()
+        self.assertEqual(meta["nondominated_size"], 2)
+        self.assertEqual(meta["unique_nondominated_size"], 1)
+        self.assertEqual(len(meta["archive_target_returns"]), 1)
+        self.assertEqual(meta["archive_target_returns"][0], [1.0, 1.0])
+
+    def test_pcn_target_commands_expand_to_num_samples(self) -> None:
+        rng = np.random.default_rng(0)
+        commands = _pcn_target_commands(
+            target_returns=[[1.0, 0.0], [0.0, 1.0]],
+            target_horizons=[2, 3],
+            num_samples=6,
+            rng=rng,
+            mode="target",
+        )
+        self.assertEqual(len(commands), 6)
+        self.assertEqual([command.source for command in commands[:2]], ["archive", "archive"])
+        self.assertTrue(all(command.sample_actions is False for command in commands))
+
+    def test_pcn_target_commands_jitter_zero_sigma(self) -> None:
+        rng = np.random.default_rng(0)
+        commands = _pcn_target_commands(
+            target_returns=[[1.0, 1.0], [1.0, 1.0]],
+            target_horizons=[2, 2],
+            num_samples=4,
+            rng=rng,
+            mode="target",
+            zero_variance_jitter=0.05,
+        )
+        unique_returns = {tuple(round(float(v), 8) for v in command.target_return.tolist()) for command in commands}
+        self.assertEqual(len(commands), 4)
+        self.assertGreater(len(unique_returns), 1)
+        self.assertEqual(commands[0].source, "archive")
+        self.assertTrue(any(command.source == "jittered" for command in commands[1:]))
 
 
 if __name__ == "__main__":

@@ -26,6 +26,10 @@ class PCNArchive:
         self.duplicate_penalty = float(duplicate_penalty)
         self.trajectories: list[PCNTrajectory] = []
 
+    @staticmethod
+    def _return_key(return_vec: torch.Tensor) -> tuple[float, ...]:
+        return tuple(round(float(v), 8) for v in return_vec.detach().to(dtype=torch.float32, device="cpu").tolist())
+
     def __len__(self) -> int:
         return len(self.trajectories)
 
@@ -73,12 +77,24 @@ class PCNArchive:
         nd_indices = torch.nonzero(nd_mask, as_tuple=False).flatten()
         seen: set[tuple[float, ...]] = set()
         for idx in nd_indices.tolist():
-            key = tuple(round(float(v), 8) for v in returns[int(idx)].tolist())
+            key = self._return_key(returns[int(idx)])
             if key in seen:
-                scores[int(idx)] -= self.duplicate_penalty
+                scores[int(idx)] -= 1.0 + self.duplicate_penalty
             else:
                 seen.add(key)
         return scores
+
+    @staticmethod
+    def _unique_by_return(trajectories: list[PCNTrajectory]) -> list[PCNTrajectory]:
+        out: list[PCNTrajectory] = []
+        seen: set[tuple[float, ...]] = set()
+        for trajectory in trajectories:
+            key = PCNArchive._return_key(trajectory.return_vec)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(trajectory)
+        return out
 
     def prune(self) -> None:
         if len(self.trajectories) <= self.capacity:
@@ -122,7 +138,7 @@ class PCNArchive:
         return PCNTarget(desired_return=target_return, desired_horizon=float(nd[base_idx].horizon))
 
     def metadata(self, *, limit: int | None = None) -> dict[str, Any]:
-        nd = self.non_dominated_trajectories()
+        nd = self._unique_by_return(self.non_dominated_trajectories())
         if limit is not None and int(limit) > 0 and len(nd) > int(limit):
             returns = torch.stack([t.return_vec.detach().to(dtype=torch.float32, device="cpu") for t in nd])
             keep = torch.argsort(crowding_distance(returns), descending=True)[: int(limit)]
@@ -130,6 +146,7 @@ class PCNArchive:
         return {
             "archive_size": len(self.trajectories),
             "nondominated_size": len(self.non_dominated_trajectories()),
+            "unique_nondominated_size": len(self._unique_by_return(self.non_dominated_trajectories())),
             "archive_target_returns": [t.return_vec.detach().cpu().tolist() for t in nd],
             "archive_target_horizons": [int(t.horizon) for t in nd],
         }

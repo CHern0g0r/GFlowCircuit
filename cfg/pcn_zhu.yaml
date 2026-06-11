@@ -11,6 +11,7 @@ head:
   type: mlp
   hidden_dims: [64]
 
+# PCN does not use reward
 reward:
   type: zhu_size
 
@@ -29,12 +30,12 @@ gamma: 1.0
 
 pcn:
   archive_capacity: 256
-  random_seed_episodes: 32
-  collect_episodes_per_iter: 8
-  train_updates_per_iter: 64
+  random_seed_episodes: 128
+  collect_episodes_per_iter: 32
+  train_updates_per_iter: 32
   batch_size: 128
   embedding_dim: 64
-  condition_scale: 1.0
+  condition_scale: 2.0
   crowding_threshold: 0.2
   duplicate_penalty: 1.0e-5
   desired_return_clip: false
