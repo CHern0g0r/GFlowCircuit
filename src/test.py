@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from statistics import mean
 
+import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
 
@@ -14,11 +15,14 @@ from src.algorithms.gflownet_tb import TBGFlowNetPolicy
 from src.algorithms.gflownet_tb.sampler import sample_tb_trajectory
 from src.algorithms.ppo import PPOPolicy
 from src.algorithms.ppo.sampler import sample_ppo_trajectory
+from src.algorithms.pcn import PCNPolicy
+from src.algorithms.pcn.sampler import sample_pcn_trajectory
 from src.algorithms.reinforce import ReinforcePolicy
 from src.algorithms.reinforce.episode import run_reinforce_episode
 from src.baselines.resyn2 import build_resyn2_cache
 from src.models import (
     reward_class_factory,
+    mo_reward_factory,
     encoder_factory,
     head_factory,
     prepare_encoder_config,
@@ -88,6 +92,52 @@ def _build_backbone(
     return enc, head
 
 
+def _build_pcn_policy(
+    cfg: DictConfig,
+    *,
+    obs_dim: int,
+    node_dim: int,
+    edge_dim: int,
+    num_actions: int,
+    num_steps: int,
+    available_actions: list[int] | None,
+) -> PCNPolicy:
+    encoder_cfg = OmegaConf.to_container(cfg["encoder"], resolve=True)
+    if not isinstance(encoder_cfg, dict):
+        raise TypeError("encoder config must resolve to a mapping")
+    encoder_cfg = prepare_encoder_config(
+        encoder_cfg,
+        obs_dim=obs_dim,
+        node_dim=node_dim,
+        edge_dim=edge_dim,
+        num_actions=num_actions,
+        available_actions=available_actions,
+    )
+    pcn_cfg = OmegaConf.select(cfg, "pcn")
+    if pcn_cfg is None:
+        pcn_cfg = OmegaConf.select(cfg, "algorithm.pcn")
+    if pcn_cfg is None:
+        pcn_cfg = OmegaConf.create({})
+    embedding_dim = int(OmegaConf.select(pcn_cfg, "embedding_dim") or 64)
+    objective_dim = int(OmegaConf.select(cfg, "mo_reward.objective_dim") or 2)
+    enc = encoder_factory(encoder_cfg=encoder_cfg)
+    head = head_factory(
+        obs_dim=embedding_dim,
+        num_actions=num_actions,
+        head_cfg=cfg["head"],
+    )
+    return PCNPolicy(
+        encoder=enc,
+        head=head,
+        num_actions=num_actions,
+        encoder_out_dim=int(encoder_cfg["out_dim"]),
+        objective_dim=objective_dim,
+        num_steps=int(num_steps),
+        embedding_dim=embedding_dim,
+        condition_scale=float(OmegaConf.select(pcn_cfg, "condition_scale") or 1.0),
+    )
+
+
 def _tb_reward_params(
     cfg: DictConfig,
     *,
@@ -123,20 +173,35 @@ def _load_policy(
     available_actions = normalize_available_actions(OmegaConf.select(cfg, "available_actions"), num_actions)
     reward_type = str(cfg["reward"]["type"])
     reward_class = reward_class_factory(cfg["reward"])
+    mo_reward_cfg = OmegaConf.select(cfg, "mo_reward")
+    if mo_reward_cfg is None:
+        mo_reward_cfg = OmegaConf.create({"type": "size_depth_improvement", "normalize": True, "objectives": ["size", "depth"]})
+    mo_reward_cfg_dict = OmegaConf.to_container(mo_reward_cfg, resolve=True)
+    if not isinstance(mo_reward_cfg_dict, dict):
+        raise TypeError("mo_reward config must resolve to a mapping")
+    mo_reward_class = mo_reward_factory(mo_reward_cfg_dict)
     algorithm_name = _get_algorithm_name(cfg)
 
-    enc, head = _build_backbone(
-        cfg,
-        obs_dim=obs_dim,
-        node_dim=node_dim,
-        edge_dim=edge_dim,
-        num_actions=num_actions,
-        available_actions=available_actions,
-    )
     value_net = None
     if algorithm_name == "gflownet_tb":
+        enc, head = _build_backbone(
+            cfg,
+            obs_dim=obs_dim,
+            node_dim=node_dim,
+            edge_dim=edge_dim,
+            num_actions=num_actions,
+            available_actions=available_actions,
+        )
         policy = TBGFlowNetPolicy(encoder=enc, head=head, num_actions=num_actions).to(device)
     elif algorithm_name == "drills_a2c":
+        enc, head = _build_backbone(
+            cfg,
+            obs_dim=obs_dim,
+            node_dim=node_dim,
+            edge_dim=edge_dim,
+            num_actions=num_actions,
+            available_actions=available_actions,
+        )
         policy = DrillsA2CPolicy(encoder=enc, head=head, num_actions=num_actions).to(device)
         value_cfg = OmegaConf.select(cfg, "value")
         if value_cfg is None:
@@ -154,6 +219,14 @@ def _load_policy(
             value_cfg=value_cfg_dict,
         ).to(device)
     elif algorithm_name == "reinforce":
+        enc, head = _build_backbone(
+            cfg,
+            obs_dim=obs_dim,
+            node_dim=node_dim,
+            edge_dim=edge_dim,
+            num_actions=num_actions,
+            available_actions=available_actions,
+        )
         policy = ReinforcePolicy(encoder=enc, head=head, num_actions=num_actions).to(device)
         value_cfg = OmegaConf.select(cfg, "value")
         if value_cfg is not None:
@@ -170,6 +243,14 @@ def _load_policy(
                 value_cfg=value_cfg_dict,
             ).to(device)
     elif algorithm_name == "ppo":
+        enc, head = _build_backbone(
+            cfg,
+            obs_dim=obs_dim,
+            node_dim=node_dim,
+            edge_dim=edge_dim,
+            num_actions=num_actions,
+            available_actions=available_actions,
+        )
         policy = PPOPolicy(encoder=enc, head=head, num_actions=num_actions).to(device)
         value_cfg = OmegaConf.select(cfg, "value")
         if value_cfg is None:
@@ -185,6 +266,16 @@ def _load_policy(
                 value_cfg=value_cfg_dict,
             ),
             value_cfg=value_cfg_dict,
+        ).to(device)
+    elif algorithm_name == "pcn":
+        policy = _build_pcn_policy(
+            cfg,
+            obs_dim=obs_dim,
+            node_dim=node_dim,
+            edge_dim=edge_dim,
+            num_actions=num_actions,
+            num_steps=num_steps,
+            available_actions=available_actions,
         ).to(device)
     else:
         raise ValueError(f"Unknown algorithm: {algorithm_name}")
@@ -206,7 +297,9 @@ def _load_policy(
         "value_net": value_net,
         "available_actions": available_actions,
         "reward_class": reward_class,
+        "mo_reward_class": mo_reward_class,
         "reward_type": reward_type,
+        "pcn": ckpt.get("pcn", {}),
     }
 
 
@@ -265,6 +358,8 @@ def main() -> None:
     available_actions = loaded["available_actions"]
     reward_type = str(loaded["reward_type"])
     reward_class = loaded["reward_class"]
+    mo_reward_class = loaded["mo_reward_class"]
+    pcn_meta = loaded.get("pcn", {})
 
     if algorithm_name == "gflownet_tb":
         tb_params = _tb_reward_params(
@@ -365,6 +460,79 @@ def main() -> None:
             "mean_final_return": mean(returns) if returns else None,
             "mean_comparable_return": mean(comparable_returns) if comparable_returns else None,
             "mean_feasible_depth_rate": mean([1.0 if x else 0.0 for x in feasible_depths]) if feasible_depths else None,
+        }
+    elif algorithm_name == "pcn":
+        pcn_cfg = OmegaConf.select(cfg, "pcn")
+        if pcn_cfg is None:
+            pcn_cfg = OmegaConf.select(cfg, "algorithm.pcn")
+        if pcn_cfg is None:
+            pcn_cfg = OmegaConf.create({})
+        desired_return_clip = bool(OmegaConf.select(pcn_cfg, "desired_return_clip") or False)
+        target_returns = pcn_meta.get("archive_target_returns", []) if isinstance(pcn_meta, dict) else []
+        target_horizons = pcn_meta.get("archive_target_horizons", []) if isinstance(pcn_meta, dict) else []
+        rng = np.random.default_rng(int(args.seed))
+
+        trajectories = []
+        if target_returns and target_horizons:
+            for target_return, target_horizon in zip(target_returns, target_horizons):
+                trajectories.append(
+                    sample_pcn_trajectory(
+                        file_path=str(circuit_path),
+                        num_steps=num_steps,
+                        policy=policy,
+                        mo_reward_class=mo_reward_class,
+                        sample_actions=False,
+                        rng=rng,
+                        available_actions=available_actions,
+                        desired_return=torch.tensor(target_return, dtype=torch.float32),
+                        desired_horizon=float(target_horizon),
+                        desired_return_clip=desired_return_clip,
+                        gamma=float(cfg.get("gamma", 1.0)),
+                    )
+                )
+        else:
+            for _ in range(max(1, int(args.num_samples))):
+                trajectories.append(
+                    sample_pcn_trajectory(
+                        file_path=str(circuit_path),
+                        num_steps=num_steps,
+                        policy=policy,
+                        mo_reward_class=mo_reward_class,
+                        sample_actions=False,
+                        rng=rng,
+                        available_actions=available_actions,
+                        gamma=float(cfg.get("gamma", 1.0)),
+                    )
+                )
+
+        sizes = [int(t.final_size) for t in trajectories]
+        depths = [int(t.final_depth) for t in trajectories]
+        qors = [int(t.final_size) * int(t.final_depth) for t in trajectories]
+        returns = [float(t.return_vec.sum().item()) for t in trajectories]
+        return_vectors = [t.return_vec.detach().cpu().tolist() for t in trajectories]
+        initial_size = int(trajectories[0].initial_size) if trajectories else 0
+        initial_depth = int(trajectories[0].initial_depth) if trajectories else 0
+
+        result = {
+            "algorithm": algorithm_name,
+            "checkpoint": str(checkpoint_path),
+            "config": str(config_path),
+            "circuit": str(circuit_path),
+            "num_samples": len(trajectories),
+            "num_steps": num_steps,
+            "reward_type": reward_type,
+            "mo_reward_type": str(OmegaConf.select(cfg, "mo_reward.type") or "size_depth_improvement"),
+            "available_actions": available_actions,
+            "initial_size": initial_size,
+            "initial_depth": initial_depth,
+            "final_sizes": sizes,
+            "final_depths": depths,
+            "final_returns": returns,
+            "return_vectors": return_vectors,
+            "mean_final_size": mean(sizes) if sizes else None,
+            "mean_final_depth": mean(depths) if depths else None,
+            "mean_final_qor": mean(qors) if qors else None,
+            "mean_final_return": mean(returns) if returns else None,
         }
     elif algorithm_name == "reinforce":
         baseline = OmegaConf.select(cfg, "baseline")

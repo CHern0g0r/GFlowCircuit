@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import numpy as np
 import re
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
@@ -17,6 +19,15 @@ from tqdm import tqdm
 
 
 _RUN_DIR_RE = re.compile(r"^run_(\d+)$")
+_PCN_TARGET_KEY_DECIMALS = 8
+
+
+@dataclass(frozen=True)
+class PCNTargetCommand:
+    target_return: torch.Tensor
+    target_horizon: float
+    sample_actions: bool
+    source: str
 
 
 def _repo_root() -> Path:
@@ -61,6 +72,140 @@ def _initial_circuit_metrics(*, circuit_path: Path, num_steps: int) -> tuple[int
     return int(get_size(obs)), int(get_depth(obs))
 
 
+def _pcn_target_commands(
+    *,
+    target_returns: list,
+    target_horizons: list,
+    num_samples: int,
+    rng: np.random.Generator,
+    mode: str,
+    zero_variance_jitter: float = 0.05,
+) -> list[PCNTargetCommand]:
+    anchors = _dedupe_pcn_target_commands(target_returns=target_returns, target_horizons=target_horizons)
+    if not anchors:
+        raise ValueError("PCN sampling requires archive_target_returns and archive_target_horizons in the checkpoint")
+
+    if mode == "paper":
+        return anchors
+    if mode == "stochastic-actions":
+        return [
+            PCNTargetCommand(
+                target_return=command.target_return,
+                target_horizon=command.target_horizon,
+                sample_actions=True,
+                source="archive",
+            )
+            for command in anchors
+        ]
+    if mode == "broad-target":
+        return _pcn_broad_target_commands(
+            anchors=anchors,
+            num_samples=num_samples,
+            rng=rng,
+            jitter_scale=zero_variance_jitter,
+        )
+    if mode != "target":
+        raise ValueError(f"Unsupported PCN sampling mode: {mode}")
+
+    sample_count = max(1, int(num_samples))
+    if len(anchors) >= sample_count:
+        return anchors[:sample_count]
+
+    returns = torch.stack([command.target_return for command in anchors], dim=0)
+    out = list(anchors)
+    while len(out) < sample_count:
+        base_idx = int(rng.integers(0, len(anchors)))
+        objective_idx = int(rng.integers(0, returns.shape[1]))
+        target_return = returns[base_idx].clone()
+        sigma = float(torch.std(returns[:, objective_idx], unbiased=False).item())
+        source = "perturbed"
+        if sigma > 0.0:
+            target_return[objective_idx] += float(rng.uniform(0.0, sigma))
+        else:
+            target_return[objective_idx] += _pcn_zero_variance_jitter(rng=rng, scale=zero_variance_jitter)
+            source = "jittered"
+        out.append(
+            PCNTargetCommand(
+                target_return=target_return,
+                target_horizon=anchors[base_idx].target_horizon,
+                sample_actions=False,
+                source=source,
+            )
+        )
+    return out
+
+
+def _dedupe_pcn_target_commands(*, target_returns: list, target_horizons: list) -> list[PCNTargetCommand]:
+    out: list[PCNTargetCommand] = []
+    seen: set[tuple[float, ...]] = set()
+    for target_return, target_horizon in zip(target_returns, target_horizons):
+        return_tensor = torch.tensor(target_return, dtype=torch.float32)
+        key = tuple(round(float(value), _PCN_TARGET_KEY_DECIMALS) for value in return_tensor.tolist())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(
+            PCNTargetCommand(
+                target_return=return_tensor,
+                target_horizon=float(target_horizon),
+                sample_actions=False,
+                source="archive",
+            )
+        )
+    return out
+
+
+def _pcn_zero_variance_jitter(*, rng: np.random.Generator, scale: float = 0.05) -> float:
+    return float(rng.uniform(0.0, max(0.0, float(scale))))
+
+
+def _pcn_broad_target_commands(
+    *,
+    anchors: list[PCNTargetCommand],
+    num_samples: int,
+    rng: np.random.Generator,
+    jitter_scale: float = 0.05,
+) -> list[PCNTargetCommand]:
+    sample_count = max(1, int(num_samples))
+    returns = torch.stack([command.target_return for command in anchors], dim=0)
+    min_returns = returns.min(dim=0).values
+    max_returns = returns.max(dim=0).values
+    ranges = max_returns - min_returns
+    fallback = torch.full_like(ranges, float(jitter_scale))
+    ranges = torch.where(ranges > 0.0, ranges, fallback)
+    low = min_returns
+    high = max_returns + ranges
+
+    out: list[PCNTargetCommand] = []
+    if returns.shape[1] == 2 and sample_count > 1:
+        weights = torch.linspace(0.0, 1.0, steps=sample_count, dtype=torch.float32)
+        for idx, weight in enumerate(weights):
+            target_return = low + (high - low) * weight
+            horizon = anchors[idx % len(anchors)].target_horizon
+            out.append(
+                PCNTargetCommand(
+                    target_return=target_return,
+                    target_horizon=horizon,
+                    sample_actions=False,
+                    source="broad",
+                )
+            )
+        return out
+
+    for idx in range(sample_count):
+        random_unit = torch.tensor(rng.uniform(0.0, 1.0, size=int(returns.shape[1])), dtype=torch.float32)
+        target_return = low + (high - low) * random_unit
+        out.append(
+            PCNTargetCommand(
+                target_return=target_return,
+                target_horizon=anchors[idx % len(anchors)].target_horizon,
+                sample_actions=False,
+                source="broad",
+            )
+        )
+    return out
+
+
 def _sample_trajectories(
     *,
     checkpoint_path: Path,
@@ -70,7 +215,9 @@ def _sample_trajectories(
     num_samples: int,
     device: torch.device,
     seed: int,
-) -> list[tuple[int, int]]:
+    pcn_sampling_mode: str,
+    pcn_zero_variance_jitter: float,
+) -> list[dict[str, object]]:
     loaded = _load_policy(
         checkpoint_path=checkpoint_path,
         cfg=cfg,
@@ -81,13 +228,15 @@ def _sample_trajectories(
     algorithm_name = loaded["algorithm"]
     policy = loaded["policy"]
     reward_class = loaded["reward_class"]
+    mo_reward_class = loaded.get("mo_reward_class")
+    pcn_meta = loaded.get("pcn", {})
     available_actions = loaded["available_actions"]
 
     torch.manual_seed(int(seed))
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(int(seed))
 
-    metrics: list[tuple[int, int]] = []
+    metrics: list[dict[str, object]] = []
     if algorithm_name == "gflownet_tb":
         from src.algorithms.gflownet_tb.sampler import sample_tb_trajectory
 
@@ -103,7 +252,7 @@ def _sample_trajectories(
                     available_actions=available_actions,
                     **tb_params,
                 )
-            metrics.append((int(trajectory.final_size), int(trajectory.final_depth)))
+            metrics.append({"size": int(trajectory.final_size), "depth": int(trajectory.final_depth)})
     elif algorithm_name == "drills_a2c":
         from src.algorithms.drills_a2c.sampler import sample_drills_a2c_trajectory
 
@@ -117,7 +266,7 @@ def _sample_trajectories(
                     sample_actions=True,
                     available_actions=available_actions,
                 )
-            metrics.append((int(trajectory.final_size), int(trajectory.final_depth)))
+            metrics.append({"size": int(trajectory.final_size), "depth": int(trajectory.final_depth)})
     elif algorithm_name == "reinforce":
         from src.algorithms.reinforce.episode import run_reinforce_episode
         from src.baselines.resyn2 import build_resyn2_cache
@@ -144,7 +293,7 @@ def _sample_trajectories(
                     baseline=baseline,
                     available_actions=available_actions,
                 )
-            metrics.append((int(episode["final_size"]), int(episode["final_depth"])))
+            metrics.append({"size": int(episode["final_size"]), "depth": int(episode["final_depth"])})
     elif algorithm_name == "ppo":
         from src.algorithms.ppo.sampler import sample_ppo_trajectory
         from src.baselines.resyn2 import build_resyn2_cache
@@ -176,7 +325,51 @@ def _sample_trajectories(
                     resyn2_baseline=resyn2_baseline,
                     available_actions=available_actions,
                 )
-            metrics.append((int(trajectory.final_size), int(trajectory.final_depth)))
+            metrics.append({"size": int(trajectory.final_size), "depth": int(trajectory.final_depth)})
+    elif algorithm_name == "pcn":
+        from src.algorithms.pcn.sampler import sample_pcn_trajectory
+
+        pcn_cfg = OmegaConf.select(cfg, "pcn")
+        if pcn_cfg is None:
+            pcn_cfg = OmegaConf.select(cfg, "algorithm.pcn")
+        if pcn_cfg is None:
+            pcn_cfg = OmegaConf.create({})
+        desired_return_clip = bool(OmegaConf.select(pcn_cfg, "desired_return_clip") or False)
+        target_returns = pcn_meta.get("archive_target_returns", []) if isinstance(pcn_meta, dict) else []
+        target_horizons = pcn_meta.get("archive_target_horizons", []) if isinstance(pcn_meta, dict) else []
+        rng = np.random.default_rng(int(seed))
+        for command in _pcn_target_commands(
+            target_returns=target_returns,
+            target_horizons=target_horizons,
+            num_samples=num_samples,
+            rng=rng,
+            mode=pcn_sampling_mode,
+            zero_variance_jitter=pcn_zero_variance_jitter,
+        ):
+            with torch.no_grad():
+                trajectory = sample_pcn_trajectory(
+                    file_path=str(circuit_path),
+                    num_steps=num_steps,
+                    policy=policy,
+                    mo_reward_class=mo_reward_class,
+                    sample_actions=command.sample_actions,
+                    rng=rng,
+                    available_actions=available_actions,
+                    desired_return=command.target_return,
+                    desired_horizon=command.target_horizon,
+                    desired_return_clip=desired_return_clip,
+                    gamma=float(cfg.get("gamma", 1.0)),
+                )
+            row: dict[str, object] = {
+                "size": int(trajectory.final_size),
+                "depth": int(trajectory.final_depth),
+                "target_horizon": float(command.target_horizon),
+                "pcn_sampling_mode": pcn_sampling_mode,
+                "target_source": command.source,
+            }
+            for objective_idx, target_value in enumerate(command.target_return.tolist()):
+                row[f"target_return_{objective_idx}"] = float(target_value)
+            metrics.append(row)
     else:
         raise ValueError(f"Unknown algorithm: {algorithm_name}")
     return metrics
@@ -190,6 +383,8 @@ def _sample_experiment(
     num_steps: int | None,
     device: torch.device,
     seed: int,
+    pcn_sampling_mode: str,
+    pcn_zero_variance_jitter: float,
 ) -> pd.DataFrame:
     config_path = experiment_dir / ".hydra" / "config.yaml"
     cfg = _load_cfg(config_path)
@@ -214,7 +409,7 @@ def _sample_experiment(
     for run_idx, (run_id, checkpoint_path) in enumerate(run_checkpoints):
         for circuit_idx, circuit_path in enumerate(circuit_paths):
             sample_seed = int(seed) + run_idx * 10_000 + circuit_idx * 1_000
-            for final_size, final_depth in tqdm(_sample_trajectories(
+            for sample_row in tqdm(_sample_trajectories(
                 checkpoint_path=checkpoint_path,
                 cfg=cfg,
                 circuit_path=circuit_path,
@@ -222,16 +417,19 @@ def _sample_experiment(
                 num_samples=num_samples,
                 device=device,
                 seed=sample_seed,
+                pcn_sampling_mode=pcn_sampling_mode,
+                pcn_zero_variance_jitter=pcn_zero_variance_jitter,
             ), desc=f"Sampling circuit {circuit_path.name} for run {run_id}"):
-                rows.append(
-                    {
-                        "circuit": str(circuit_path),
-                        "run_id": int(run_id),
-                        "size": int(final_size),
-                        "depth": int(final_depth),
-                    }
-                )
-    df = pd.DataFrame(rows, columns=["circuit", "run_id", "size", "depth"])
+                row = {
+                    "circuit": str(circuit_path),
+                    "run_id": int(run_id),
+                    **sample_row,
+                }
+                rows.append(row)
+    df = pd.DataFrame(rows)
+    leading_columns = ["circuit", "run_id", "size", "depth"]
+    other_columns = [column for column in df.columns if column not in leading_columns]
+    df = df[leading_columns + other_columns]
     df["run_id"] = df["run_id"].astype("Int64")
     return df
 
@@ -256,10 +454,27 @@ def main() -> None:
         required=True,
         help="Path to a circuit file (.blif/.aig). Repeat for multiple circuits.",
     )
-    parser.add_argument("--num-samples", type=int, default=20, help="Number of stochastic rollouts per run and circuit.")
+    parser.add_argument("--num-samples", type=int, default=20, help="Number of sampled rollouts per run and circuit.")
     parser.add_argument("--num-steps", type=int, default=None, help="Override num_steps from the experiment config.")
     parser.add_argument("--seed", type=int, default=0, help="Base random seed for sampling.")
     parser.add_argument("--device", default=None, help="Device: cuda or cpu. Defaults to cuda if available.")
+    parser.add_argument(
+        "--pcn-sampling-mode",
+        choices=("paper", "target", "broad-target", "stochastic-actions"),
+        default="target",
+        help=(
+            "PCN only: 'paper' rolls out archived targets deterministically; "
+            "'target' samples desired-return targets and rolls out deterministically; "
+            "'broad-target' sweeps a broader deterministic target range; "
+            "'stochastic-actions' samples actions from archived targets for debugging."
+        ),
+    )
+    parser.add_argument(
+        "--pcn-zero-variance-jitter",
+        type=float,
+        default=0.05,
+        help="PCN only: target-return jitter used when archive targets have zero variance.",
+    )
     args = parser.parse_args()
 
     outputs_root = (
@@ -288,6 +503,8 @@ def main() -> None:
         num_steps=args.num_steps,
         device=device,
         seed=int(args.seed),
+        pcn_sampling_mode=str(args.pcn_sampling_mode),
+        pcn_zero_variance_jitter=float(args.pcn_zero_variance_jitter),
     )
 
     out_path = experiment_dir / "points.csv"

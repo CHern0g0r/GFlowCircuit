@@ -1,0 +1,51 @@
+defaults:
+  - default
+  - algorithm: pcn
+  - override encoder: hybrid_zhu
+  - _self_
+
+run_name: pcn_zhu_i10
+dataset_cfg: cfg/data/zhu2020/i10.yaml
+
+head:
+  type: mlp
+  hidden_dims: [64]
+
+# PCN does not use reward
+reward:
+  type: zhu_size
+
+mo_reward:
+  type: size_depth_improvement
+  normalize: true
+  objectives: [size, depth]
+  objective_dim: 2
+
+num_steps: 20
+available_actions: [0, 1, 2, 3, 4]
+episodes: 1000
+eval_every: 100
+learning_rate: 0.001
+gamma: 1.0
+
+pcn:
+  archive_capacity: 256
+  random_seed_episodes: 128
+  collect_episodes_per_iter: 32
+  train_updates_per_iter: 32
+  batch_size: 128
+  embedding_dim: 64
+  condition_scale: 2.0
+  crowding_threshold: 0.2
+  duplicate_penalty: 1.0e-5
+  target_noise_scale: 0.05
+  target_min_sigma: 0.01
+  desired_return_clip: false
+  eval_target_limit: 64
+
+paper_mode:
+  per_circuit_mode: true
+  num_runs: 1
+  infer_rollouts: 1
+
+json_out: ${output_dir}/pcn_report.json

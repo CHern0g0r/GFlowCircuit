@@ -1,0 +1,15 @@
+name: pcn
+pcn:
+  archive_capacity: 256
+  random_seed_episodes: 32
+  collect_episodes_per_iter: 8
+  train_updates_per_iter: 64
+  batch_size: 128
+  embedding_dim: 64
+  condition_scale: 1.0
+  crowding_threshold: 0.2
+  duplicate_penalty: 1.0e-5
+  target_noise_scale: 0.0
+  target_min_sigma: 0.0
+  desired_return_clip: false
+  eval_target_limit: 64

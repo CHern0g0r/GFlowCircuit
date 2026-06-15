@@ -12,6 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 from src.algorithms.drills_a2c import DrillsA2CPolicy, DrillsA2CTrainer
 from src.algorithms.gflownet_tb import TBGFlowNetPolicy, TBGFlowNetTrainer
 from src.algorithms.ppo import PPOPolicy, PPOTrainer
+from src.algorithms.pcn import PCNPolicy, PCNTrainer
 from src.algorithms.reinforce import ReinforcePolicy, ReinforceTrainer
 from src.baselines.resyn2 import build_resyn2_cache
 from src.utils import (
@@ -22,6 +23,7 @@ from src.utils import (
 )
 from src.models import (
     reward_class_factory,
+    mo_reward_factory,
     encoder_factory,
     head_factory,
     prepare_encoder_config,
@@ -37,6 +39,7 @@ def _save_run_checkpoint(
     seed: int,
     policy: torch.nn.Module,
     value_net: torch.nn.Module | None,
+    extra_payload: dict[str, object] | None = None,
 ) -> Path:
     run_dir = output_dir / "saved_models" / f"run_{run_idx}"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -48,6 +51,8 @@ def _save_run_checkpoint(
     }
     if value_net is not None:
         payload["value_state_dict"] = value_net.state_dict()
+    if extra_payload is not None:
+        payload.update(extra_payload)
     torch.save(payload, ckpt_path)
     return ckpt_path
 
@@ -218,6 +223,52 @@ def _build_tb_policy(
     return TBGFlowNetPolicy(encoder=enc, head=head, num_actions=num_actions)
 
 
+def _build_pcn_policy(
+    cfg: DictConfig,
+    obs_dim: int,
+    node_dim: int,
+    edge_dim: int,
+    num_actions: int,
+    available_actions: list[int] | None,
+) -> PCNPolicy:
+    encoder_cfg = OmegaConf.to_container(cfg["encoder"], resolve=True)
+    if not isinstance(encoder_cfg, dict):
+        raise TypeError("encoder config must resolve to a mapping")
+    encoder_cfg = prepare_encoder_config(
+        encoder_cfg,
+        obs_dim=obs_dim,
+        node_dim=node_dim,
+        edge_dim=edge_dim,
+        num_actions=num_actions,
+        available_actions=available_actions,
+    )
+
+    pcn_cfg = OmegaConf.select(cfg, "pcn")
+    if pcn_cfg is None:
+        pcn_cfg = OmegaConf.select(cfg, "algorithm.pcn")
+    if pcn_cfg is None:
+        pcn_cfg = OmegaConf.create({})
+    embedding_dim = int(OmegaConf.select(pcn_cfg, "embedding_dim") or 64)
+    objective_dim = int(OmegaConf.select(cfg, "mo_reward.objective_dim") or 2)
+
+    enc = encoder_factory(encoder_cfg=encoder_cfg)
+    head = head_factory(
+        obs_dim=embedding_dim,
+        num_actions=num_actions,
+        head_cfg=cfg["head"],
+    )
+    return PCNPolicy(
+        encoder=enc,
+        head=head,
+        num_actions=num_actions,
+        encoder_out_dim=int(encoder_cfg["out_dim"]),
+        objective_dim=objective_dim,
+        num_steps=int(cfg.num_steps),
+        embedding_dim=embedding_dim,
+        condition_scale=float(OmegaConf.select(pcn_cfg, "condition_scale") or 1.0),
+    )
+
+
 def _get_algorithm_name(cfg: DictConfig) -> str:
     algo_cfg = OmegaConf.select(cfg, "algorithm")
     if algo_cfg is None:
@@ -256,6 +307,13 @@ def main(cfg: DictConfig) -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     reward_class = reward_class_factory(cfg.reward)
+    mo_reward_cfg = OmegaConf.select(cfg, "mo_reward")
+    if mo_reward_cfg is None:
+        mo_reward_cfg = OmegaConf.create({"type": "size_depth_improvement", "normalize": True, "objectives": ["size", "depth"]})
+    mo_reward_cfg_dict = OmegaConf.to_container(mo_reward_cfg, resolve=True)
+    if not isinstance(mo_reward_cfg_dict, dict):
+        raise TypeError("mo_reward config must resolve to a mapping")
+    mo_reward_class = mo_reward_factory(mo_reward_cfg_dict)
     algorithm_name = _get_algorithm_name(cfg)
 
     use_tb = OmegaConf.select(cfg, "logging.tensorboard")
@@ -344,6 +402,85 @@ def main(cfg: DictConfig) -> None:
                 seed=run_seed,
                 policy=policy,
                 value_net=None,
+            )
+            runs.append(
+                {
+                    "run_idx": run_idx,
+                    "seed": run_seed,
+                    "history": train_out["history"],
+                    "final_eval": final_eval,
+                    "checkpoint_path": str(ckpt_path),
+                }
+            )
+        elif algorithm_name == "pcn":
+            policy = _build_pcn_policy(
+                cfg,
+                obs_dim=obs_dim,
+                node_dim=node_dim,
+                edge_dim=edge_dim,
+                num_actions=num_actions,
+                available_actions=available_actions,
+            ).to(device)
+            pcn_cfg = OmegaConf.select(cfg, "pcn")
+            if pcn_cfg is None:
+                pcn_cfg = OmegaConf.select(cfg, "algorithm.pcn")
+            if pcn_cfg is None:
+                pcn_cfg = OmegaConf.create({})
+
+            archive_capacity = int(OmegaConf.select(pcn_cfg, "archive_capacity") or 256)
+            random_seed_episodes = int(OmegaConf.select(pcn_cfg, "random_seed_episodes") or 32)
+            collect_episodes_per_iter = int(OmegaConf.select(pcn_cfg, "collect_episodes_per_iter") or 8)
+            train_updates_per_iter = int(OmegaConf.select(pcn_cfg, "train_updates_per_iter") or 64)
+            batch_size = int(OmegaConf.select(pcn_cfg, "batch_size") or 128)
+            crowding_threshold = float(OmegaConf.select(pcn_cfg, "crowding_threshold") or 0.2)
+            duplicate_penalty = float(OmegaConf.select(pcn_cfg, "duplicate_penalty") or 1e-5)
+            target_noise_scale = float(OmegaConf.select(pcn_cfg, "target_noise_scale") or 0.0)
+            target_min_sigma = float(OmegaConf.select(pcn_cfg, "target_min_sigma") or 0.0)
+            desired_return_clip = bool(OmegaConf.select(pcn_cfg, "desired_return_clip") or False)
+            eval_target_limit_raw = OmegaConf.select(pcn_cfg, "eval_target_limit")
+            eval_target_limit = int(eval_target_limit_raw) if eval_target_limit_raw is not None else None
+
+            trainer = PCNTrainer(
+                policy=policy,
+                mo_reward_class=mo_reward_class,
+                train_circuits=train_circuits,
+                test_circuits=test_circuits,
+                resyn2_baselines=resyn2_baselines,
+                device=device,
+                seed=run_seed,
+                log_dir=(tb_log_dir / f"run_{run_idx}") if tb_log_dir is not None else None,
+                available_actions=available_actions,
+                archive_capacity=archive_capacity,
+                gamma=float(cfg.gamma),
+                crowding_threshold=crowding_threshold,
+                duplicate_penalty=duplicate_penalty,
+                target_noise_scale=target_noise_scale,
+                target_min_sigma=target_min_sigma,
+            )
+            train_out = trainer.train(
+                episodes=int(cfg.episodes),
+                num_steps=int(cfg.num_steps),
+                eval_every=int(cfg.eval_every),
+                learning_rate=float(cfg.learning_rate),
+                random_seed_episodes=random_seed_episodes,
+                collect_episodes_per_iter=collect_episodes_per_iter,
+                train_updates_per_iter=train_updates_per_iter,
+                batch_size=batch_size,
+                desired_return_clip=desired_return_clip,
+                eval_target_limit=eval_target_limit,
+            )
+            final_eval = trainer.evaluate(
+                num_steps=int(cfg.num_steps),
+                eval_target_limit=eval_target_limit,
+                desired_return_clip=desired_return_clip,
+            )
+            ckpt_path = _save_run_checkpoint(
+                output_dir=output_dir,
+                run_idx=run_idx,
+                seed=run_seed,
+                policy=policy,
+                value_net=None,
+                extra_payload={"pcn": trainer.checkpoint_metadata(limit=eval_target_limit)},
             )
             runs.append(
                 {
