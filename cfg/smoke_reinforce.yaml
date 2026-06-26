@@ -1,6 +1,7 @@
 # Small REINFORCE smoke test: 2 circuits -> 1 train + 1 test.
 defaults:
   - default
+  - environment: default
   - algorithm: reinforce
   - override encoder: id
   - _self_

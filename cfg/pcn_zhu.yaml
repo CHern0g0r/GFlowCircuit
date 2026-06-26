@@ -1,5 +1,6 @@
 defaults:
   - default
+  - environment: default
   - algorithm: pcn
   - override encoder: hybrid_zhu
   - _self_
@@ -21,8 +22,6 @@ mo_reward:
   objectives: [size, depth]
   objective_dim: 2
 
-num_steps: 20
-available_actions: [0, 1, 2, 3, 4]
 episodes: 1000
 eval_every: 100
 learning_rate: 0.001

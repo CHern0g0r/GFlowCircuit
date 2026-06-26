@@ -1,5 +1,6 @@
 defaults:
   - default
+  - environment: default
   - algorithm: reinforce
   - override encoder: gcn
   - _self_
@@ -22,7 +23,6 @@ value:
 reward:
   type: zhu_size
 
-num_steps: 20
 episodes: 200
 eval_every: 50
 terminal_reward: false

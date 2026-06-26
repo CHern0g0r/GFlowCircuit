@@ -1,0 +1,4 @@
+path: data/EPFL_benchmarks/arithmetic
+format: aig
+files:
+  - div

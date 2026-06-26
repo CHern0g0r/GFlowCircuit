@@ -1,5 +1,6 @@
 defaults:
   - default
+  - environment: default
   - algorithm: gflownet_tb
   - override encoder: hybrid_zhu
   - _self_
@@ -19,8 +20,6 @@ reward:
   c_size: 0.5
   c_depth: 0.5
 
-num_steps: 20
-available_actions: [0, 1, 2, 3, 4]
 episodes: 200
 eval_every: 50
 train_ratio: 0.75
