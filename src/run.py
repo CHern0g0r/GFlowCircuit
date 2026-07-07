@@ -378,14 +378,41 @@ def main(cfg: DictConfig) -> None:
             if tb_batch_size is None:
                 tb_batch_size = 4
             tb_trajectories_per_episode = int(tb_batch_size)
-            tb_reward_alpha = float(OmegaConf.select(tb_cfg, "reward_alpha") or 4.0)
-            tb_reward_eps = float(OmegaConf.select(tb_cfg, "reward_eps") or 1e-8)
-            tb_reward_improvement_clip = float(OmegaConf.select(tb_cfg, "reward_improvement_clip") or 2.0)
+            tb_reward_alpha_cfg = OmegaConf.select(tb_cfg, "reward_alpha")
+            tb_reward_eps_cfg = OmegaConf.select(tb_cfg, "reward_eps")
+            tb_reward_improvement_clip_cfg = OmegaConf.select(tb_cfg, "reward_improvement_clip")
+            tb_reward_alpha = float(4.0 if tb_reward_alpha_cfg is None else tb_reward_alpha_cfg)
+            tb_reward_eps = float(1e-8 if tb_reward_eps_cfg is None else tb_reward_eps_cfg)
+            tb_reward_improvement_clip = float(
+                2.0 if tb_reward_improvement_clip_cfg is None else tb_reward_improvement_clip_cfg
+            )
             tb_log_z_learning_rate_cfg = OmegaConf.select(tb_cfg, "log_z_learning_rate")
             if tb_log_z_learning_rate_cfg is None:
                 tb_log_z_learning_rate = 10.0 * float(cfg.learning_rate)
             else:
                 tb_log_z_learning_rate = float(tb_log_z_learning_rate_cfg)
+            tb_exploration_epsilon_enabled_cfg = OmegaConf.select(tb_cfg, "exploration_epsilon_enabled")
+            tb_exploration_epsilon_enabled = (
+                True if tb_exploration_epsilon_enabled_cfg is None else bool(tb_exploration_epsilon_enabled_cfg)
+            )
+            tb_exploration_epsilon_start_cfg = OmegaConf.select(tb_cfg, "exploration_epsilon_start")
+            tb_exploration_epsilon_end_cfg = OmegaConf.select(tb_cfg, "exploration_epsilon_end")
+            tb_exploration_warmup_episodes_cfg = OmegaConf.select(tb_cfg, "exploration_warmup_episodes")
+            tb_exploration_decay_episodes_cfg = OmegaConf.select(tb_cfg, "exploration_decay_episodes")
+            tb_exploration_epsilon_start = float(
+                0.5 if tb_exploration_epsilon_start_cfg is None else tb_exploration_epsilon_start_cfg
+            )
+            tb_exploration_epsilon_end = float(
+                0.01 if tb_exploration_epsilon_end_cfg is None else tb_exploration_epsilon_end_cfg
+            )
+            tb_exploration_warmup_episodes = int(
+                20 if tb_exploration_warmup_episodes_cfg is None else tb_exploration_warmup_episodes_cfg
+            )
+            tb_exploration_decay_episodes = (
+                None
+                if tb_exploration_decay_episodes_cfg is None
+                else int(tb_exploration_decay_episodes_cfg)
+            )
 
             train_out = trainer.train(
                 episodes=int(cfg.episodes),
@@ -397,6 +424,11 @@ def main(cfg: DictConfig) -> None:
                 reward_alpha=tb_reward_alpha,
                 reward_eps=tb_reward_eps,
                 reward_improvement_clip=tb_reward_improvement_clip,
+                exploration_epsilon_enabled=tb_exploration_epsilon_enabled,
+                exploration_epsilon_start=tb_exploration_epsilon_start,
+                exploration_epsilon_end=tb_exploration_epsilon_end,
+                exploration_warmup_episodes=tb_exploration_warmup_episodes,
+                exploration_decay_episodes=tb_exploration_decay_episodes,
                 best_of_eval_rollouts=best_of_rollouts,
             )
             final_eval = trainer.evaluate(

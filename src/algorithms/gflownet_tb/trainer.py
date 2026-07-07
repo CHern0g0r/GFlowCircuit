@@ -45,6 +45,48 @@ def _build_tb_optimizer(
     )
 
 
+def _validate_probability(name: str, value: float) -> float:
+    value = float(value)
+    if value < 0.0 or value > 1.0:
+        raise ValueError(f"{name} must be in [0, 1], got {value}")
+    return value
+
+
+def _tb_exploration_epsilon(
+    *,
+    episode: int,
+    episodes: int,
+    enabled: bool,
+    epsilon_start: float,
+    epsilon_end: float,
+    warmup_episodes: int,
+    decay_episodes: int | None,
+) -> float:
+    epsilon_start = _validate_probability("exploration_epsilon_start", epsilon_start)
+    epsilon_end = _validate_probability("exploration_epsilon_end", epsilon_end)
+    warmup_episodes = int(warmup_episodes)
+    if warmup_episodes < 0:
+        raise ValueError(f"exploration_warmup_episodes must be >= 0, got {warmup_episodes}")
+    if decay_episodes is not None:
+        decay_episodes = int(decay_episodes)
+        if decay_episodes <= 0:
+            raise ValueError(f"exploration_decay_episodes must be positive, got {decay_episodes}")
+
+    if not bool(enabled):
+        return 0.0
+
+    episode = int(episode)
+    episodes = int(episodes)
+    if episode <= warmup_episodes:
+        return epsilon_start
+
+    resolved_decay_episodes = decay_episodes
+    if resolved_decay_episodes is None:
+        resolved_decay_episodes = max(1, episodes - warmup_episodes)
+    progress = min(1.0, max(0.0, float(episode - warmup_episodes) / float(resolved_decay_episodes)))
+    return epsilon_start + progress * (epsilon_end - epsilon_start)
+
+
 class TBGFlowNetTrainer:
     def __init__(
         self,
@@ -81,6 +123,11 @@ class TBGFlowNetTrainer:
         reward_alpha: float,
         reward_eps: float,
         reward_improvement_clip: float,
+        exploration_epsilon_enabled: bool,
+        exploration_epsilon_start: float,
+        exploration_epsilon_end: float,
+        exploration_warmup_episodes: int,
+        exploration_decay_episodes: int | None,
         best_of_eval_rollouts: int,
     ) -> dict[str, Any]:
         optimizer = _build_tb_optimizer(
@@ -91,6 +138,15 @@ class TBGFlowNetTrainer:
         history: list[dict[str, Any]] = []
 
         for ep in trange(1, episodes + 1, desc="Training TB"):
+            exploration_epsilon = _tb_exploration_epsilon(
+                episode=ep,
+                episodes=episodes,
+                enabled=exploration_epsilon_enabled,
+                epsilon_start=exploration_epsilon_start,
+                epsilon_end=exploration_epsilon_end,
+                warmup_episodes=exploration_warmup_episodes,
+                decay_episodes=exploration_decay_episodes,
+            )
             batch_size = max(1, int(trajectories_per_episode))
             circuits = [
                 self.train_circuits[int(self.rng.integers(0, len(self.train_circuits)))] for _ in range(batch_size)
@@ -105,6 +161,7 @@ class TBGFlowNetTrainer:
                 reward_improvement_clip=reward_improvement_clip,
                 sample_actions=True,
                 available_actions=self.available_actions,
+                epsilon_uniform=exploration_epsilon,
             )
 
             optimizer.zero_grad(set_to_none=True)
@@ -133,6 +190,7 @@ class TBGFlowNetTrainer:
                         "train/final_return": mean_final_return,
                         "train/terminal_reward": mean_terminal_reward,
                         "train/trajectory_len": mean_traj_len,
+                        "train/exploration_epsilon": exploration_epsilon,
                     },
                 )
 
@@ -149,6 +207,7 @@ class TBGFlowNetTrainer:
                     "train_policy_loss": float(loss.item()),
                     "train_log_z": float(self.policy.log_z.detach().item()),
                     "train_final_return": mean_final_return,
+                    "train_exploration_epsilon": exploration_epsilon,
                     "test_mean_final_return": eval_summary["mean_final_return"],
                     "test_mean_comparable_return": eval_summary["mean_comparable_return"],
                     "test_mean_size_reduction": eval_summary["mean_size_reduction"],

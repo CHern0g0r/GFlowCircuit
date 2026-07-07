@@ -30,6 +30,11 @@ tb:
   reward_eps: 1.0e-8
   reward_improvement_clip: 2.0
   log_z_learning_rate: null
+  exploration_epsilon_enabled: true
+  exploration_epsilon_start: 0.5
+  exploration_epsilon_end: 0.01
+  exploration_warmup_episodes: 20
+  exploration_decay_episodes: null
 
 paper_mode:
   per_circuit_mode: true
