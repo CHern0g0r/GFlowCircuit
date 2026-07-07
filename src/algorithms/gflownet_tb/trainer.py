@@ -15,6 +15,36 @@ from src.algorithms.gflownet_tb.sampler import sample_tb_trajectories
 from src.metrics import TensorBoardLogger
 
 
+def _build_tb_optimizer(
+    policy: TBGFlowNetPolicy,
+    *,
+    learning_rate: float,
+    log_z_learning_rate: float,
+) -> torch.optim.Adam:
+    learning_rate = float(learning_rate)
+    log_z_learning_rate = float(log_z_learning_rate)
+    if learning_rate <= 0.0:
+        raise ValueError(f"learning_rate must be positive, got {learning_rate}")
+    if log_z_learning_rate <= 0.0:
+        raise ValueError(f"log_z_learning_rate must be positive, got {log_z_learning_rate}")
+
+    log_z_id = id(policy.log_z)
+    policy_params = [
+        param
+        for _, param in policy.named_parameters()
+        if param.requires_grad and id(param) != log_z_id
+    ]
+    if log_z_id in {id(param) for param in policy_params}:
+        raise RuntimeError("policy.log_z must not be included in the policy optimizer group")
+
+    return torch.optim.Adam(
+        [
+            {"params": policy_params, "lr": learning_rate},
+            {"params": [policy.log_z], "lr": log_z_learning_rate},
+        ]
+    )
+
+
 class TBGFlowNetTrainer:
     def __init__(
         self,
@@ -46,13 +76,18 @@ class TBGFlowNetTrainer:
         num_steps: int,
         eval_every: int,
         learning_rate: float,
+        log_z_learning_rate: float,
         trajectories_per_episode: int,
         reward_alpha: float,
         reward_eps: float,
         reward_improvement_clip: float,
         best_of_eval_rollouts: int,
     ) -> dict[str, Any]:
-        optimizer = torch.optim.Adam(self.policy.parameters(), lr=learning_rate)
+        optimizer = _build_tb_optimizer(
+            self.policy,
+            learning_rate=learning_rate,
+            log_z_learning_rate=log_z_learning_rate,
+        )
         history: list[dict[str, Any]] = []
 
         for ep in trange(1, episodes + 1, desc="Training TB"):

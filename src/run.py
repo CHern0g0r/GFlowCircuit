@@ -381,12 +381,18 @@ def main(cfg: DictConfig) -> None:
             tb_reward_alpha = float(OmegaConf.select(tb_cfg, "reward_alpha") or 4.0)
             tb_reward_eps = float(OmegaConf.select(tb_cfg, "reward_eps") or 1e-8)
             tb_reward_improvement_clip = float(OmegaConf.select(tb_cfg, "reward_improvement_clip") or 2.0)
+            tb_log_z_learning_rate_cfg = OmegaConf.select(tb_cfg, "log_z_learning_rate")
+            if tb_log_z_learning_rate_cfg is None:
+                tb_log_z_learning_rate = 10.0 * float(cfg.learning_rate)
+            else:
+                tb_log_z_learning_rate = float(tb_log_z_learning_rate_cfg)
 
             train_out = trainer.train(
                 episodes=int(cfg.episodes),
                 num_steps=int(cfg.num_steps),
                 eval_every=int(cfg.eval_every),
                 learning_rate=float(cfg.learning_rate),
+                log_z_learning_rate=tb_log_z_learning_rate,
                 trajectories_per_episode=tb_trajectories_per_episode,
                 reward_alpha=tb_reward_alpha,
                 reward_eps=tb_reward_eps,

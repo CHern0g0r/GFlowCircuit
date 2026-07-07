@@ -6,3 +6,4 @@ tb:
   reward_alpha: 4.0
   reward_eps: 1.0e-8
   reward_improvement_clip: 2.0
+  log_z_learning_rate: null
