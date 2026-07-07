@@ -11,7 +11,7 @@ from tqdm import trange
 from src.algorithms.gflownet_tb.eval import evaluate_tb
 from src.algorithms.gflownet_tb.loss import trajectory_balance_loss
 from src.algorithms.gflownet_tb.policy import TBGFlowNetPolicy
-from src.algorithms.gflownet_tb.sampler import sample_tb_trajectory
+from src.algorithms.gflownet_tb.sampler import sample_tb_trajectories
 from src.metrics import TensorBoardLogger
 
 
@@ -56,21 +56,21 @@ class TBGFlowNetTrainer:
         history: list[dict[str, Any]] = []
 
         for ep in trange(1, episodes + 1, desc="Training TB"):
-            trajectories = []
-            for _ in range(max(1, int(trajectories_per_episode))):
-                circuit = self.train_circuits[int(self.rng.integers(0, len(self.train_circuits)))]
-                tr = sample_tb_trajectory(
-                    file_path=circuit,
-                    num_steps=num_steps,
-                    policy=self.policy,
-                    reward_class=self.reward_class,
-                    reward_alpha=reward_alpha,
-                    reward_eps=reward_eps,
-                    reward_improvement_clip=reward_improvement_clip,
-                    sample_actions=True,
-                    available_actions=self.available_actions,
-                )
-                trajectories.append(tr)
+            batch_size = max(1, int(trajectories_per_episode))
+            circuits = [
+                self.train_circuits[int(self.rng.integers(0, len(self.train_circuits)))] for _ in range(batch_size)
+            ]
+            trajectories = sample_tb_trajectories(
+                file_paths=circuits,
+                num_steps=num_steps,
+                policy=self.policy,
+                reward_class=self.reward_class,
+                reward_alpha=reward_alpha,
+                reward_eps=reward_eps,
+                reward_improvement_clip=reward_improvement_clip,
+                sample_actions=True,
+                available_actions=self.available_actions,
+            )
 
             optimizer.zero_grad(set_to_none=True)
             log_pf = torch.stack([t.log_pf_sum for t in trajectories])

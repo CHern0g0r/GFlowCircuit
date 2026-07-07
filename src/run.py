@@ -372,7 +372,12 @@ def main(cfg: DictConfig) -> None:
             tb_cfg = OmegaConf.select(cfg, "tb")
             if tb_cfg is None:
                 tb_cfg = OmegaConf.select(cfg, "algorithm.tb")
-            tb_trajectories_per_episode = int(OmegaConf.select(tb_cfg, "trajectories_per_episode") or 4)
+            tb_batch_size = OmegaConf.select(tb_cfg, "batch_size")
+            if tb_batch_size is None:
+                tb_batch_size = OmegaConf.select(tb_cfg, "trajectories_per_episode")
+            if tb_batch_size is None:
+                tb_batch_size = 4
+            tb_trajectories_per_episode = int(tb_batch_size)
             tb_reward_alpha = float(OmegaConf.select(tb_cfg, "reward_alpha") or 4.0)
             tb_reward_eps = float(OmegaConf.select(tb_cfg, "reward_eps") or 1e-8)
             tb_reward_improvement_clip = float(OmegaConf.select(tb_cfg, "reward_improvement_clip") or 2.0)

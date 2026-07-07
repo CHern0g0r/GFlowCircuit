@@ -1,6 +1,7 @@
 # Algorithm-specific knobs for Trajectory Balance GFlowNet.
 name: gflownet_tb
 tb:
+  batch_size: 4
   trajectories_per_episode: 4
   reward_alpha: 4.0
   reward_eps: 1.0e-8
