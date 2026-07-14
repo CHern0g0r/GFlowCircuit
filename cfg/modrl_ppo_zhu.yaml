@@ -1,0 +1,46 @@
+defaults:
+  - default
+  - environment: default
+  - algorithm: modrl_ppo
+  - override encoder: hybrid_zhu
+  - _self_
+
+run_name: modrl_ppo_zhu_i10
+dataset_cfg: cfg/data/zhu2020/i10.yaml
+
+policy:
+  type: reinforce
+head:
+  type: mlp
+  hidden_dims: [32]
+value:
+  type: mlp
+  input: zhu10
+  hidden_dims: [32]
+
+# Only used for resyn2 baseline cache construction. MODRL-PPO uses mo_reward.
+reward:
+  type: zhu_size
+
+mo_reward:
+  type: size_depth_improvement
+  normalize: true
+  objectives: [size, depth]
+  objective_dim: 2
+
+episodes: 200
+eval_every: 50
+train_ratio: 0.75
+seed: 0
+learning_rate: 0.001
+gamma: 1.0
+baseline: zhu_resyn2
+baseline_scale: 1.0
+
+paper_mode:
+  per_circuit_mode: true
+  num_runs: 1
+  infer_rollouts: 1
+
+json_out: ${output_dir}/modrl_ppo_report.json
+

@@ -11,6 +11,7 @@ from omegaconf import DictConfig, OmegaConf
 
 from src.algorithms.drills_a2c import DrillsA2CPolicy, DrillsA2CTrainer
 from src.algorithms.gflownet_tb import TBGFlowNetPolicy, TBGFlowNetTrainer
+from src.algorithms.modrl_ppo import MODRLPPOTrainer, parse_preference_specs
 from src.algorithms.ppo import PPOPolicy, PPOTrainer
 from src.algorithms.pcn import PCNPolicy, PCNTrainer
 from src.algorithms.reinforce import ReinforcePolicy, ReinforceTrainer
@@ -53,6 +54,25 @@ def _save_run_checkpoint(
         payload["value_state_dict"] = value_net.state_dict()
     if extra_payload is not None:
         payload.update(extra_payload)
+    torch.save(payload, ckpt_path)
+    return ckpt_path
+
+
+def _save_modrl_run_checkpoint(
+    *,
+    output_dir: Path,
+    run_idx: int,
+    seed: int,
+    trainer: MODRLPPOTrainer,
+) -> Path:
+    run_dir = output_dir / "saved_models" / f"run_{run_idx}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_path = run_dir / "last.pt"
+    payload: dict[str, object] = {
+        "run_idx": int(run_idx),
+        "seed": int(seed),
+        "modrl_ppo": trainer.checkpoint_metadata(),
+    }
     torch.save(payload, ckpt_path)
     return ckpt_path
 
@@ -557,6 +577,86 @@ def main(cfg: DictConfig) -> None:
                     "checkpoint_path": str(ckpt_path),
                 }
             )
+        elif algorithm_name == "modrl_ppo":
+            modrl_cfg = OmegaConf.select(cfg, "modrl_ppo")
+            if modrl_cfg is None:
+                modrl_cfg = OmegaConf.select(cfg, "algorithm.modrl_ppo")
+            if modrl_cfg is None:
+                raise ValueError("modrl_ppo requires a modrl_ppo config section")
+            preferences = parse_preference_specs(OmegaConf.select(modrl_cfg, "preferences"))
+
+            policies: dict[str, PPOPolicy] = {}
+            value_nets: dict[str, torch.nn.Module] = {}
+            for preference in preferences:
+                policy, value_net = _build_ppo_models(
+                    cfg,
+                    obs_dim=obs_dim,
+                    node_dim=node_dim,
+                    edge_dim=edge_dim,
+                    num_actions=num_actions,
+                    available_actions=available_actions,
+                )
+                policies[preference.id] = policy.to(device)
+                value_nets[preference.id] = value_net.to(device)
+
+            trainer = MODRLPPOTrainer(
+                policies=policies,
+                value_networks=value_nets,
+                preferences=preferences,
+                mo_reward_class=mo_reward_class,
+                train_circuits=train_circuits,
+                test_circuits=test_circuits,
+                resyn2_baselines=resyn2_baselines,
+                device=device,
+                seed=run_seed,
+                log_dir=(tb_log_dir / f"run_{run_idx}") if tb_log_dir is not None else None,
+                available_actions=available_actions,
+            )
+
+            rollout_steps = int(OmegaConf.select(modrl_cfg, "rollout_steps") or 200)
+            ppo_epochs = int(OmegaConf.select(modrl_cfg, "ppo_epochs") or 20)
+            minibatch_size = int(OmegaConf.select(modrl_cfg, "minibatch_size") or 64)
+            clip_eps = float(OmegaConf.select(modrl_cfg, "clip_eps") or 0.2)
+            value_loss_coef = float(OmegaConf.select(modrl_cfg, "value_loss_coef") or 0.5)
+            modrl_entropy_beta = float(OmegaConf.select(modrl_cfg, "entropy_beta") or 0.0)
+            normalize_advantages = bool(OmegaConf.select(modrl_cfg, "normalize_advantages") or False)
+            modrl_clip_grad_norm = OmegaConf.select(modrl_cfg, "clip_grad_norm")
+            gae_lambda_cfg = OmegaConf.select(modrl_cfg, "gae_lambda")
+            gae_lambda = float(gae_lambda_cfg) if gae_lambda_cfg is not None else 0.95
+
+            train_out = trainer.train(
+                episodes=int(cfg.episodes),
+                num_steps=int(cfg.num_steps),
+                eval_every=int(cfg.eval_every),
+                learning_rate=float(cfg.learning_rate),
+                gamma=float(cfg.gamma),
+                rollout_steps=rollout_steps,
+                ppo_epochs=ppo_epochs,
+                minibatch_size=minibatch_size,
+                clip_eps=clip_eps,
+                value_loss_coef=value_loss_coef,
+                entropy_beta=modrl_entropy_beta,
+                normalize_advantages=normalize_advantages,
+                clip_grad_norm=float(modrl_clip_grad_norm) if modrl_clip_grad_norm is not None else None,
+                gae_lambda=gae_lambda,
+                best_of_eval_rollouts=best_of_rollouts,
+            )
+            final_eval = trainer.evaluate(num_steps=int(cfg.num_steps), best_of_rollouts=best_of_rollouts)
+            ckpt_path = _save_modrl_run_checkpoint(
+                output_dir=output_dir,
+                run_idx=run_idx,
+                seed=run_seed,
+                trainer=trainer,
+            )
+            runs.append(
+                {
+                    "run_idx": run_idx,
+                    "seed": run_seed,
+                    "history": train_out["history"],
+                    "final_eval": final_eval,
+                    "checkpoint_path": str(ckpt_path),
+                }
+            )
         elif algorithm_name == "ppo":
             policy, value_net = _build_ppo_models(
                 cfg,
@@ -712,7 +812,16 @@ def main(cfg: DictConfig) -> None:
         "test_circuits": test_circuits,
         "runs": runs,
         "mean_final_return_across_runs": float(
-            sum(r["final_eval"]["mean_final_return"] for r in runs) / max(1, len(runs))
+            sum(
+                float(
+                    r["final_eval"].get(
+                        "mean_final_return",
+                        r["final_eval"].get("mean_hypervolume", 0.0),
+                    )
+                )
+                for r in runs
+            )
+            / max(1, len(runs))
         ),
     }
 

@@ -1,0 +1,100 @@
+name: modrl_ppo
+modrl_ppo:
+  rollout_steps: 200
+  ppo_epochs: 20
+  minibatch_size: 64
+  clip_eps: 0.2
+  value_loss_coef: 0.5
+  entropy_beta: 0.0
+  normalize_advantages: true
+  clip_grad_norm: null
+  gae_lambda: 0.95
+  preferences:
+    - id: linear_size
+      mode: linear
+      weights: [1.0, 0.0]
+    - id: linear_size_075_depth_025
+      mode: linear
+      weights: [0.75, 0.25]
+    - id: linear_balanced
+      mode: linear
+      weights: [0.5, 0.5]
+    - id: linear_size_025_depth_075
+      mode: linear
+      weights: [0.25, 0.75]
+    - id: linear_depth
+      mode: linear
+      weights: [0.0, 1.0]
+    - id: tlo_depth_000_size
+      mode: tlo
+      constraint_objective: depth
+      optimize_objective: size
+      threshold: 0.0
+      lex_scale: 10.0
+    - id: tlo_depth_002_size
+      mode: tlo
+      constraint_objective: depth
+      optimize_objective: size
+      threshold: 0.02
+      lex_scale: 10.0
+    - id: tlo_depth_005_size
+      mode: tlo
+      constraint_objective: depth
+      optimize_objective: size
+      threshold: 0.05
+      lex_scale: 10.0
+    - id: tlo_depth_010_size
+      mode: tlo
+      constraint_objective: depth
+      optimize_objective: size
+      threshold: 0.10
+      lex_scale: 10.0
+    - id: tlo_depth_015_size
+      mode: tlo
+      constraint_objective: depth
+      optimize_objective: size
+      threshold: 0.15
+      lex_scale: 10.0
+    - id: tlo_depth_020_size
+      mode: tlo
+      constraint_objective: depth
+      optimize_objective: size
+      threshold: 0.20
+      lex_scale: 10.0
+    - id: tlo_depth_030_size
+      mode: tlo
+      constraint_objective: depth
+      optimize_objective: size
+      threshold: 0.30
+      lex_scale: 10.0
+    - id: tlo_size_000_depth
+      mode: tlo
+      constraint_objective: size
+      optimize_objective: depth
+      threshold: 0.0
+      lex_scale: 10.0
+    - id: tlo_size_005_depth
+      mode: tlo
+      constraint_objective: size
+      optimize_objective: depth
+      threshold: 0.05
+      lex_scale: 10.0
+    - id: tlo_size_010_depth
+      mode: tlo
+      constraint_objective: size
+      optimize_objective: depth
+      threshold: 0.10
+      lex_scale: 10.0
+    - id: tlo_size_015_depth
+      mode: tlo
+      constraint_objective: size
+      optimize_objective: depth
+      threshold: 0.15
+      lex_scale: 10.0
+    - id: tlo_size_020_depth
+      mode: tlo
+      constraint_objective: size
+      optimize_objective: depth
+      threshold: 0.20
+      lex_scale: 10.0
+
