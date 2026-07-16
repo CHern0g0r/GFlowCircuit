@@ -1,4 +1,4 @@
-path: data/EPFL_benchmarks/arithmetic
+path: data/benchmarks/arithmetic
 format: aig
 files:
   - adder
