@@ -11,8 +11,80 @@ from tqdm import trange
 from src.algorithms.gflownet_tb.eval import evaluate_tb
 from src.algorithms.gflownet_tb.loss import trajectory_balance_loss
 from src.algorithms.gflownet_tb.policy import TBGFlowNetPolicy
-from src.algorithms.gflownet_tb.sampler import sample_tb_trajectory
+from src.algorithms.gflownet_tb.sampler import sample_tb_trajectories
 from src.metrics import TensorBoardLogger
+
+
+def _build_tb_optimizer(
+    policy: TBGFlowNetPolicy,
+    *,
+    learning_rate: float,
+    log_z_learning_rate: float,
+) -> torch.optim.Adam:
+    learning_rate = float(learning_rate)
+    log_z_learning_rate = float(log_z_learning_rate)
+    if learning_rate <= 0.0:
+        raise ValueError(f"learning_rate must be positive, got {learning_rate}")
+    if log_z_learning_rate <= 0.0:
+        raise ValueError(f"log_z_learning_rate must be positive, got {log_z_learning_rate}")
+
+    log_z_id = id(policy.log_z)
+    policy_params = [
+        param
+        for _, param in policy.named_parameters()
+        if param.requires_grad and id(param) != log_z_id
+    ]
+    if log_z_id in {id(param) for param in policy_params}:
+        raise RuntimeError("policy.log_z must not be included in the policy optimizer group")
+
+    return torch.optim.Adam(
+        [
+            {"params": policy_params, "lr": learning_rate},
+            {"params": [policy.log_z], "lr": log_z_learning_rate},
+        ]
+    )
+
+
+def _validate_probability(name: str, value: float) -> float:
+    value = float(value)
+    if value < 0.0 or value > 1.0:
+        raise ValueError(f"{name} must be in [0, 1], got {value}")
+    return value
+
+
+def _tb_exploration_epsilon(
+    *,
+    episode: int,
+    episodes: int,
+    enabled: bool,
+    epsilon_start: float,
+    epsilon_end: float,
+    warmup_episodes: int,
+    decay_episodes: int | None,
+) -> float:
+    epsilon_start = _validate_probability("exploration_epsilon_start", epsilon_start)
+    epsilon_end = _validate_probability("exploration_epsilon_end", epsilon_end)
+    warmup_episodes = int(warmup_episodes)
+    if warmup_episodes < 0:
+        raise ValueError(f"exploration_warmup_episodes must be >= 0, got {warmup_episodes}")
+    if decay_episodes is not None:
+        decay_episodes = int(decay_episodes)
+        if decay_episodes <= 0:
+            raise ValueError(f"exploration_decay_episodes must be positive, got {decay_episodes}")
+
+    if not bool(enabled):
+        return 0.0
+
+    episode = int(episode)
+    episodes = int(episodes)
+    if episode <= warmup_episodes:
+        return epsilon_start
+
+    resolved_decay_episodes = decay_episodes
+    if resolved_decay_episodes is None:
+        resolved_decay_episodes = max(1, episodes - warmup_episodes)
+    progress = min(1.0, max(0.0, float(episode - warmup_episodes) / float(resolved_decay_episodes)))
+    return epsilon_start + progress * (epsilon_end - epsilon_start)
 
 
 class TBGFlowNetTrainer:
@@ -46,31 +118,51 @@ class TBGFlowNetTrainer:
         num_steps: int,
         eval_every: int,
         learning_rate: float,
+        log_z_learning_rate: float,
         trajectories_per_episode: int,
         reward_alpha: float,
         reward_eps: float,
         reward_improvement_clip: float,
+        exploration_epsilon_enabled: bool,
+        exploration_epsilon_start: float,
+        exploration_epsilon_end: float,
+        exploration_warmup_episodes: int,
+        exploration_decay_episodes: int | None,
         best_of_eval_rollouts: int,
     ) -> dict[str, Any]:
-        optimizer = torch.optim.Adam(self.policy.parameters(), lr=learning_rate)
+        optimizer = _build_tb_optimizer(
+            self.policy,
+            learning_rate=learning_rate,
+            log_z_learning_rate=log_z_learning_rate,
+        )
         history: list[dict[str, Any]] = []
 
         for ep in trange(1, episodes + 1, desc="Training TB"):
-            trajectories = []
-            for _ in range(max(1, int(trajectories_per_episode))):
-                circuit = self.train_circuits[int(self.rng.integers(0, len(self.train_circuits)))]
-                tr = sample_tb_trajectory(
-                    file_path=circuit,
-                    num_steps=num_steps,
-                    policy=self.policy,
-                    reward_class=self.reward_class,
-                    reward_alpha=reward_alpha,
-                    reward_eps=reward_eps,
-                    reward_improvement_clip=reward_improvement_clip,
-                    sample_actions=True,
-                    available_actions=self.available_actions,
-                )
-                trajectories.append(tr)
+            exploration_epsilon = _tb_exploration_epsilon(
+                episode=ep,
+                episodes=episodes,
+                enabled=exploration_epsilon_enabled,
+                epsilon_start=exploration_epsilon_start,
+                epsilon_end=exploration_epsilon_end,
+                warmup_episodes=exploration_warmup_episodes,
+                decay_episodes=exploration_decay_episodes,
+            )
+            batch_size = max(1, int(trajectories_per_episode))
+            circuits = [
+                self.train_circuits[int(self.rng.integers(0, len(self.train_circuits)))] for _ in range(batch_size)
+            ]
+            trajectories = sample_tb_trajectories(
+                file_paths=circuits,
+                num_steps=num_steps,
+                policy=self.policy,
+                reward_class=self.reward_class,
+                reward_alpha=reward_alpha,
+                reward_eps=reward_eps,
+                reward_improvement_clip=reward_improvement_clip,
+                sample_actions=True,
+                available_actions=self.available_actions,
+                epsilon_uniform=exploration_epsilon,
+            )
 
             optimizer.zero_grad(set_to_none=True)
             log_pf = torch.stack([t.log_pf_sum for t in trajectories])
@@ -98,6 +190,7 @@ class TBGFlowNetTrainer:
                         "train/final_return": mean_final_return,
                         "train/terminal_reward": mean_terminal_reward,
                         "train/trajectory_len": mean_traj_len,
+                        "train/exploration_epsilon": exploration_epsilon,
                     },
                 )
 
@@ -114,6 +207,7 @@ class TBGFlowNetTrainer:
                     "train_policy_loss": float(loss.item()),
                     "train_log_z": float(self.policy.log_z.detach().item()),
                     "train_final_return": mean_final_return,
+                    "train_exploration_epsilon": exploration_epsilon,
                     "test_mean_final_return": eval_summary["mean_final_return"],
                     "test_mean_comparable_return": eval_summary["mean_comparable_return"],
                     "test_mean_size_reduction": eval_summary["mean_size_reduction"],

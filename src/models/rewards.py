@@ -47,7 +47,7 @@ class ZhuSizeReward:
 
 
 class DepthReward:
-    def __init__(self, initial_depth: int, initial_size: int):
+    def __init__(self, initial_size: int, initial_depth: int):
         self.weight = 1/initial_depth
 
     def __call__(self, size: int, depth: int,

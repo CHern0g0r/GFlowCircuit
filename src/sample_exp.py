@@ -238,20 +238,20 @@ def _sample_trajectories(
 
     metrics: list[dict[str, object]] = []
     if algorithm_name == "gflownet_tb":
-        from src.algorithms.gflownet_tb.sampler import sample_tb_trajectory
+        from src.algorithms.gflownet_tb.sampler import sample_tb_trajectories
 
         tb_params = _tb_reward_params(cfg)
-        for _ in range(max(1, int(num_samples))):
-            with torch.no_grad():
-                trajectory = sample_tb_trajectory(
-                    file_path=str(circuit_path),
-                    num_steps=num_steps,
-                    policy=policy,
-                    reward_class=reward_class,
-                    sample_actions=True,
-                    available_actions=available_actions,
-                    **tb_params,
-                )
+        with torch.no_grad():
+            trajectories = sample_tb_trajectories(
+                file_paths=[str(circuit_path) for _ in range(max(1, int(num_samples)))],
+                num_steps=num_steps,
+                policy=policy,
+                reward_class=reward_class,
+                sample_actions=True,
+                available_actions=available_actions,
+                **tb_params,
+            )
+        for trajectory in trajectories:
             metrics.append({"size": int(trajectory.final_size), "depth": int(trajectory.final_depth)})
     elif algorithm_name == "drills_a2c":
         from src.algorithms.drills_a2c.sampler import sample_drills_a2c_trajectory

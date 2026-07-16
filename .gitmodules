@@ -1,0 +1,6 @@
+[submodule "data/benchmarks"]
+	path = data/benchmarks
+	url = https://github.com/lsils/benchmarks.git
+[submodule "data/hdl-benchmarks"]
+	path = data/hdl-benchmarks
+	url = https://github.com/ispras/hdl-benchmarks.git

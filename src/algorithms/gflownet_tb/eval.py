@@ -3,9 +3,10 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+import torch
 
 from src.algorithms.gflownet_tb.policy import TBGFlowNetPolicy
-from src.algorithms.gflownet_tb.sampler import sample_tb_trajectory
+from src.algorithms.gflownet_tb.sampler import sample_tb_trajectories
 from src.eval_metrics import (
     aggregate_common_eval_metrics,
     final_qor,
@@ -29,20 +30,18 @@ def evaluate_tb(
 ) -> dict[str, Any]:
     per_circuit = []
     for circuit in circuits:
-        candidates = []
-        for _ in range(max(1, int(best_of_rollouts))):
-            candidates.append(
-                sample_tb_trajectory(
-                    file_path=circuit,
-                    num_steps=num_steps,
-                    policy=policy,
-                    reward_class=reward_class,
-                    reward_alpha=reward_alpha,
-                    reward_eps=reward_eps,
-                    reward_improvement_clip=reward_improvement_clip,
-                    sample_actions=best_of_rollouts > 1,
-                    available_actions=available_actions,
-                )
+        num_rollouts = max(1, int(best_of_rollouts))
+        with torch.no_grad():
+            candidates = sample_tb_trajectories(
+                file_paths=[circuit for _ in range(num_rollouts)],
+                num_steps=num_steps,
+                policy=policy,
+                reward_class=reward_class,
+                reward_alpha=reward_alpha,
+                reward_eps=reward_eps,
+                reward_improvement_clip=reward_improvement_clip,
+                sample_actions=num_rollouts > 1,
+                available_actions=available_actions,
             )
         best = max(candidates, key=lambda t: float(t.final_return))
         variants = resyn2_baselines[circuit]["resyn2_variants"]

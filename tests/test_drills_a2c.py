@@ -92,9 +92,10 @@ class DrillsA2CTest(unittest.TestCase):
 
         self.assertTrue(torch.isclose(loss.mean_target, torch.tensor(0.5)))
         self.assertTrue(torch.isclose(loss.mean_advantage, torch.tensor(-1.0)))
-        self.assertTrue(torch.isclose(loss.critic_loss, torch.tensor(2.5)))
+        self.assertTrue(torch.isclose(loss.critic_loss, torch.tensor(5.0)))
         self.assertTrue(torch.isclose(loss.actor_loss, torch.tensor(-math.log(2.0))))
         self.assertTrue(torch.isclose(loss.entropy, torch.tensor(math.log(2.0))))
+        self.assertTrue(torch.isclose(loss.total_loss, torch.tensor(-math.log(2.0) + 2.5)))
 
 
 if __name__ == "__main__":

@@ -12,7 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 from src.algorithms.drills_a2c import DrillsA2CPolicy
 from src.algorithms.drills_a2c.sampler import sample_drills_a2c_trajectory
 from src.algorithms.gflownet_tb import TBGFlowNetPolicy
-from src.algorithms.gflownet_tb.sampler import sample_tb_trajectory
+from src.algorithms.gflownet_tb.sampler import sample_tb_trajectories
 from src.algorithms.ppo import PPOPolicy
 from src.algorithms.ppo.sampler import sample_ppo_trajectory
 from src.algorithms.pcn import PCNPolicy
@@ -369,18 +369,15 @@ def main() -> None:
             reward_improvement_clip=args.reward_improvement_clip,
         )
 
-        trajectories = []
-        for _ in range(max(1, int(args.num_samples))):
-            trajectories.append(
-                sample_tb_trajectory(
-                    file_path=str(circuit_path),
-                    num_steps=num_steps,
-                    policy=policy,
-                    reward_class=reward_class,
-                    sample_actions=True,
-                    available_actions=available_actions,
-                    **tb_params,
-                )
+        with torch.no_grad():
+            trajectories = sample_tb_trajectories(
+                file_paths=[str(circuit_path) for _ in range(max(1, int(args.num_samples)))],
+                num_steps=num_steps,
+                policy=policy,
+                reward_class=reward_class,
+                sample_actions=True,
+                available_actions=available_actions,
+                **tb_params,
             )
 
         sizes = [int(t.final_size) for t in trajectories]
