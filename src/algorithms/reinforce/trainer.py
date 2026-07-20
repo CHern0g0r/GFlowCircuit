@@ -17,6 +17,11 @@ from src.eval_metrics import (
     normalized_improvement_vs_resyn2_2,
     size_reduction_pct,
 )
+from src.discovery_metrics import (
+    build_training_discovery_tracker,
+    finalize_training_discovery,
+    record_training_trajectory,
+)
 from src.metrics import TensorBoardLogger
 from src.utils import StepSample, discounted_returns
 
@@ -66,9 +71,18 @@ class ReinforceTrainer:
         clip_grad_norm_policy: float | None = None,
         clip_grad_norm_value: float | None = None,
         normalize_returns: bool = False,
+        discovery_metrics_enabled: bool = True,
+        discovery_emit_every_trajectories: int = 50,
     ) -> dict[str, Any]:
         baseline_ema = torch.tensor(0.0, device=self.device)
         history: list[dict[str, Any]] = []
+        discovery = build_training_discovery_tracker(
+            enabled=discovery_metrics_enabled,
+            circuits=self.train_circuits,
+            resyn2_baselines=self.resyn2_baselines,
+            emit_every_trajectories=discovery_emit_every_trajectories,
+            tensorboard_logger=self._tb,
+        )
 
         policy_optimizer = torch.optim.Adam(self.policy.parameters(), lr=float(policy_learning_rate))
         value_optimizer = None
@@ -87,6 +101,7 @@ class ReinforceTrainer:
                 baseline=self.baseline,
                 available_actions=self.available_actions,
             )
+            record_training_trajectory(discovery, episode, circuit=circuit)
 
             steps: list[StepSample] = episode["trajectory"]
             if not self.terminal_reward:
@@ -237,9 +252,10 @@ class ReinforceTrainer:
                         },
                     )
 
+        discovery_out = finalize_training_discovery(discovery)
         if self._tb is not None:
             self._tb.close()
-        return {"history": history}
+        return {"history": history, **discovery_out}
 
     def evaluate(self, *, num_steps: int, best_of_rollouts: int = 1) -> dict[str, Any]:
         per_circuit = []

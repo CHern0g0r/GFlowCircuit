@@ -14,6 +14,11 @@ from src.algorithms.drills_a2c.loss import drills_a2c_loss
 from src.algorithms.drills_a2c.policy import DrillsA2CPolicy
 from src.algorithms.drills_a2c.sampler import sample_drills_a2c_trajectory
 from src.algorithms.drills_a2c.types import DrillsA2CStep
+from src.discovery_metrics import (
+    build_training_discovery_tracker,
+    finalize_training_discovery,
+    record_training_trajectory,
+)
 from src.metrics import TensorBoardLogger
 
 
@@ -57,12 +62,21 @@ class DrillsA2CTrainer:
         clip_grad_norm: float | None,
         normalize_advantages: bool,
         best_of_eval_rollouts: int,
+        discovery_metrics_enabled: bool = True,
+        discovery_emit_every_trajectories: int = 50,
     ) -> dict[str, Any]:
         optimizer = torch.optim.Adam(
             list(self.policy.parameters()) + list(self.value_network.parameters()),
             lr=float(learning_rate),
         )
         history: list[dict[str, Any]] = []
+        discovery = build_training_discovery_tracker(
+            enabled=discovery_metrics_enabled,
+            circuits=self.train_circuits,
+            resyn2_baselines=self.resyn2_baselines,
+            emit_every_trajectories=discovery_emit_every_trajectories,
+            tensorboard_logger=self._tb,
+        )
 
         for ep in trange(1, int(episodes) + 1, desc="Training DRiLLS-A2C"):
             trajectories = []
@@ -78,6 +92,7 @@ class DrillsA2CTrainer:
                     available_actions=self.available_actions,
                 )
                 trajectories.append(tr)
+                record_training_trajectory(discovery, tr)
                 all_steps.extend(tr.steps)
 
             optimizer.zero_grad(set_to_none=True)
@@ -167,9 +182,10 @@ class DrillsA2CTrainer:
                         },
                     )
 
+        discovery_out = finalize_training_discovery(discovery)
         if self._tb is not None:
             self._tb.close()
-        return {"history": history}
+        return {"history": history, **discovery_out}
 
     def evaluate(self, *, num_steps: int, best_of_rollouts: int = 1) -> dict[str, Any]:
         return evaluate_drills_a2c(
@@ -181,4 +197,3 @@ class DrillsA2CTrainer:
             best_of_rollouts=int(best_of_rollouts),
             available_actions=self.available_actions,
         )
-

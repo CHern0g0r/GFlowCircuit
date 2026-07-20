@@ -7,7 +7,7 @@
 # losses, optimizers, and exploration settings are intentionally not fixed here.
 
 contract:
-  version: 1
+  version: 2
   status: frozen
 
   task:
@@ -72,6 +72,22 @@ contract:
     # With reference [1, 1], a solution improving only one objective has zero
     # 2-D hypervolume. Always report the separate size/depth reductions above.
     boundary_hypervolume_is_zero: true
+
+  training_discovery:
+    role: diagnostic_only
+    source: training_terminal_states
+    include_checkpoint_evaluation: false
+    include_final_evaluation: false
+    budget_axis: completed_trajectories_per_circuit
+    emit_every_trajectories: 50
+    archive:
+      unique_raw_points: true
+      initialize_with_original_circuit: true
+      require_no_worse_than_original: true
+      dominance: weak_pareto_minimization
+    metrics:
+      - strict_hypervolume
+      - distinct_nondominated_endpoints
 
 # Shared active Hydra fields, matching cfg/tb_zhuDOP.yaml and its defaults.
 dataset_cfg: ${contract.task.dataset_manifest}

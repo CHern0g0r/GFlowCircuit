@@ -65,6 +65,12 @@ paper_mode:
 logging:
   tensorboard: true
 
+# Training-only discovery diagnostics. These trajectories are never mixed with
+# checkpoint or final inference samples.
+discovery_metrics:
+  enabled: true
+  emit_every_trajectories: 50
+
 # Written after training; interpolated from fields above
 json_out: ${output_dir}/reinforce_report.json
 
