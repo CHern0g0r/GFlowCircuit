@@ -1,0 +1,6 @@
+# @package _global_
+
+pcn:
+  random_seed_episodes: 64
+  target_noise_scale: 0.05
+  target_min_sigma: 0.01

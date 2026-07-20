@@ -212,5 +212,3 @@ abc.history
 **/sbatch_*.sh
 outputs/
 # /data/
-
-**/exp/

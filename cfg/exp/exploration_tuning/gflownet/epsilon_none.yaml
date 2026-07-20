@@ -1,0 +1,8 @@
+# @package _global_
+
+tb:
+  exploration_epsilon_enabled: false
+  exploration_epsilon_start: 0.0
+  exploration_epsilon_end: 0.0
+  exploration_warmup_episodes: 0
+  exploration_decay_episodes: null
