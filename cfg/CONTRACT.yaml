@@ -1,0 +1,109 @@
+# Experimental contract for the controlled Zhu diff-of-product comparison.
+#
+# This file is a specification and a Hydra-compatible source of shared fields.
+# Algorithm configs should inherit/copy the global model and environment fields
+# below, then translate `contract.budgets.training_trajectories_per_seed` into
+# their own episode/iteration representation. Algorithm-specific rewards,
+# losses, optimizers, and exploration settings are intentionally not fixed here.
+
+contract:
+  version: 1
+  status: frozen
+
+  task:
+    dataset_manifest: cfg/data/zhu2020/i10.yaml
+    per_circuit_training: true
+    objectives: [size, depth]
+    objective_direction: minimize
+    normalization: initial_circuit
+
+  budgets:
+    # A trajectory is one complete 20-action circuit-synthesis rollout.
+    # Count exploratory trajectories as training trajectories too.
+    training_trajectories_per_seed: 800
+    environment_transitions_per_seed: 16000
+
+    # Used by src.run while training and when producing checkpoint reports.
+    checkpoint_evaluation_samples_per_seed: 10
+
+    # Used for the final points.csv comparison via:
+    #   python -m src.sample_exp ... --num-samples 50 --seed 0
+    final_evaluation_samples_per_seed: 50
+
+    # Keep training robustness separate from inference sampling variability.
+    training_seeds: 10
+    training_seed_start: 0
+    evaluation_seed: 0
+
+  # Equivalent training-budget translations. These are contract metadata;
+  # algorithms may update a different number of times, but must consume 800
+  # complete trajectories per seed in the controlled comparison.
+  algorithm_budget_translation:
+    gflownet_tb:
+      episodes: 200
+      trajectories_per_episode: 4
+    reinforce:
+      episodes: 800
+      trajectories_per_episode: 1
+    drills_a2c:
+      episodes: 200
+      trajectories_per_episode: 4
+    ppo:
+      iterations: 200
+      rollout_steps_per_iteration: 80
+      transitions_per_trajectory: 20
+    pcn:
+      collected_trajectories: 800
+
+  evaluation:
+    # Coordinates are normalized costs (size / initial_size,
+    # depth / initial_depth), so smaller is better.
+    hypervolume_reference: [1.0, 1.0]
+    hypervolume_reference_policy: fixed_before_model_selection
+    primary_selection_metric: mean_per_seed_archive_hypervolume
+    primary_selection_samples_per_seed: 50
+    also_report:
+      - pooled_archive_hypervolume
+      - best_of_n_curves
+      - mean_terminal_product_improvement
+      - best_size_reduction
+      - best_depth_reduction
+    best_of_n: [1, 2, 5, 10, 20, 50]
+    # With reference [1, 1], a solution improving only one objective has zero
+    # 2-D hypervolume. Always report the separate size/depth reductions above.
+    boundary_hypervolume_is_zero: true
+
+# Shared active Hydra fields, matching cfg/tb_zhuDOP.yaml and its defaults.
+dataset_cfg: ${contract.task.dataset_manifest}
+num_steps: 20
+available_actions: [0, 1, 2, 3, 4, 5, 6]
+
+encoder:
+  type: hybrid
+  merge: concat
+  graph:
+    type: zhu_gcn
+    input_graph: true
+    hidden_dim: 12
+    out_dim: 4
+    num_layers: 4
+    dropout: 0.0
+    pooling: mean
+    node_feature_mode: auto
+  vector:
+    type: vector_mlp
+    source: zhu10
+    out_dim: 28
+    hidden_dims: []
+
+policy:
+  type: reinforce
+
+head:
+  type: mlp
+  hidden_dims: [32]
+
+paper_mode:
+  per_circuit_mode: true
+  num_runs: ${contract.budgets.training_seeds}
+  infer_rollouts: ${contract.budgets.checkpoint_evaluation_samples_per_seed}
