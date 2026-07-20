@@ -28,9 +28,11 @@ reward:
 
 # Training
 num_steps: 10
-# Optional whitelist of environment action ids. null keeps every action exposed by the environment.
-available_actions: null
-episodes: 200
+# Shared action space for all trainable algorithms.
+available_actions: [0, 1, 2, 3, 4, 5, 6]
+# REINFORCE collects one trajectory per episode. With 800 episodes it matches
+# the canonical GFlowNet budget: 200 episodes x 4 trajectories = 800.
+episodes: 800
 eval_every: 20
 train_ratio: 0.75
 seed: 0

@@ -1,9 +1,9 @@
 name: drills_a2c
 drills:
-  trajectories_per_episode: 1
+  # Match GFlowNet's four training trajectories per episode.
+  trajectories_per_episode: 4
   value_loss_coef: 0.5
   entropy_beta: 0.0
   clip_grad_norm: null
   normalize_advantages: false
   depth_constraint_ratio: 1.0
-

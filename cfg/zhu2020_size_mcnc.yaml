@@ -21,7 +21,9 @@ value:
 reward:
   type: zhu_size
 
-episodes: 200
+# REINFORCE collects one trajectory per episode. Match GFlowNet's total of 800
+# training trajectories per seed.
+episodes: 800
 eval_every: 50
 terminal_reward: false
 

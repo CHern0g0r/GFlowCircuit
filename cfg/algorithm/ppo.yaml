@@ -1,6 +1,9 @@
 name: ppo
 ppo:
-  rollout_steps: 200
+  # Four complete 20-step trajectories per training iteration, matching
+  # GFlowNet's trajectories_per_episode. PPO collects whole trajectories until
+  # this transition count is reached.
+  rollout_steps: 80
   ppo_epochs: 20
   minibatch_size: 64
   clip_eps: 0.2
@@ -9,4 +12,3 @@ ppo:
   normalize_advantages: true
   clip_grad_norm: null
   gae_lambda: 0.95
-

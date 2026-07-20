@@ -22,7 +22,9 @@ mo_reward:
   objectives: [size, depth]
   objective_dim: 2
 
-episodes: 1000
+# PCN's episodes count collected trajectories directly. Match the canonical
+# GFlowNet budget: 200 episodes x 4 trajectories = 800.
+episodes: 800
 eval_every: 100
 learning_rate: 0.001
 gamma: 1.0
