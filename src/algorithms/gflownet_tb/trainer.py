@@ -18,36 +18,11 @@ from src.discovery_metrics import (
     record_training_trajectory,
 )
 from src.metrics import TensorBoardLogger
+from src.algorithms.gflownet_tb.optim import build_tb_optimizer
 
 
-def _build_tb_optimizer(
-    policy: TBGFlowNetPolicy,
-    *,
-    learning_rate: float,
-    log_z_learning_rate: float,
-) -> torch.optim.Adam:
-    learning_rate = float(learning_rate)
-    log_z_learning_rate = float(log_z_learning_rate)
-    if learning_rate <= 0.0:
-        raise ValueError(f"learning_rate must be positive, got {learning_rate}")
-    if log_z_learning_rate <= 0.0:
-        raise ValueError(f"log_z_learning_rate must be positive, got {log_z_learning_rate}")
-
-    log_z_id = id(policy.log_z)
-    policy_params = [
-        param
-        for _, param in policy.named_parameters()
-        if param.requires_grad and id(param) != log_z_id
-    ]
-    if log_z_id in {id(param) for param in policy_params}:
-        raise RuntimeError("policy.log_z must not be included in the policy optimizer group")
-
-    return torch.optim.Adam(
-        [
-            {"params": policy_params, "lr": learning_rate},
-            {"params": [policy.log_z], "lr": log_z_learning_rate},
-        ]
-    )
+# Backwards compatibility for callers that imported the former private helper.
+_build_tb_optimizer = build_tb_optimizer
 
 
 def _validate_probability(name: str, value: float) -> float:
@@ -137,7 +112,7 @@ class TBGFlowNetTrainer:
         discovery_metrics_enabled: bool = True,
         discovery_emit_every_trajectories: int = 50,
     ) -> dict[str, Any]:
-        optimizer = _build_tb_optimizer(
+        optimizer = build_tb_optimizer(
             self.policy,
             learning_rate=learning_rate,
             log_z_learning_rate=log_z_learning_rate,

@@ -10,7 +10,7 @@ from hydra.utils import to_absolute_path
 from omegaconf import DictConfig, OmegaConf
 
 from src.algorithms.drills_a2c import DrillsA2CPolicy, DrillsA2CTrainer
-from src.algorithms.gflownet_tb import TBGFlowNetPolicy, TBGFlowNetTrainer
+from src.algorithms.gflownet_tb import TBGFlowNetPolicy, TBGFlowNetTrainer, build_tb_policy
 from src.algorithms.ppo import PPOPolicy, PPOTrainer
 from src.algorithms.pcn import PCNPolicy, PCNTrainer
 from src.algorithms.reinforce import ReinforcePolicy, ReinforceTrainer
@@ -195,33 +195,8 @@ def _build_ppo_models(
     return policy, value_net
 
 
-def _build_tb_policy(
-    cfg: DictConfig,
-    obs_dim: int,
-    node_dim: int,
-    edge_dim: int,
-    num_actions: int,
-    available_actions: list[int] | None,
-) -> TBGFlowNetPolicy:
-    encoder_cfg = OmegaConf.to_container(cfg["encoder"], resolve=True)
-    if not isinstance(encoder_cfg, dict):
-        raise TypeError("encoder config must resolve to a mapping")
-    encoder_cfg = prepare_encoder_config(
-        encoder_cfg,
-        obs_dim=obs_dim,
-        node_dim=node_dim,
-        edge_dim=edge_dim,
-        num_actions=num_actions,
-        available_actions=available_actions,
-    )
-
-    enc = encoder_factory(encoder_cfg=encoder_cfg)
-    head = head_factory(
-        obs_dim=encoder_cfg["out_dim"],
-        num_actions=num_actions,
-        head_cfg=cfg["head"],
-    )
-    return TBGFlowNetPolicy(encoder=enc, head=head, num_actions=num_actions)
+# Backwards compatibility for code that imported the former private builder.
+_build_tb_policy = build_tb_policy
 
 
 def _build_pcn_policy(
