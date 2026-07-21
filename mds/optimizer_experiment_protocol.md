@@ -45,15 +45,15 @@ archive.
 
 For residual
 
-\[
+$$
 \delta = \log Z + \log P_F - \log R - \log P_B,
-\]
+$$
 
 log `mean(delta)^2`, `var(delta)`, RMS, quantiles, the analytic target
 
-\[
+$$
 \log Z_{target}=\operatorname{mean}(\log R+\log P_B-\log P_F),
-\]
+$$
 
 and the analytically recentered residual. Also log policy and `logZ` gradient
 norms, parameter-update norms, learning rates, logits, entropy, maximum action

@@ -4,6 +4,40 @@ import torch
 from torch import nn
 
 
+def policy_parameters_excluding_log_z(policy: nn.Module) -> list[nn.Parameter]:
+    """Return trainable policy parameters, never including ``policy.log_z``."""
+    log_z = getattr(policy, "log_z", None)
+    if not isinstance(log_z, nn.Parameter):
+        raise TypeError("policy.log_z must be a torch.nn.Parameter")
+
+    log_z_id = id(log_z)
+    policy_params = [
+        param
+        for _, param in policy.named_parameters()
+        if param.requires_grad and id(param) != log_z_id
+    ]
+    if not policy_params:
+        raise ValueError("policy must have at least one trainable parameter other than log_z")
+    if log_z_id in {id(param) for param in policy_params}:
+        raise RuntimeError("policy.log_z must not be included in the policy optimizer group")
+    return policy_params
+
+
+def build_policy_optimizer(
+    policy: nn.Module,
+    *,
+    learning_rate: float,
+) -> torch.optim.Adam:
+    """Build policy-only Adam while excluding the TB normalizer ``log_z``."""
+    learning_rate = float(learning_rate)
+    if learning_rate <= 0.0:
+        raise ValueError(f"learning_rate must be positive, got {learning_rate}")
+    return torch.optim.Adam(
+        policy_parameters_excluding_log_z(policy),
+        lr=learning_rate,
+    )
+
+
 def build_tb_optimizer(
     policy: nn.Module,
     *,
@@ -22,16 +56,7 @@ def build_tb_optimizer(
     if not isinstance(log_z, nn.Parameter):
         raise TypeError("policy.log_z must be a torch.nn.Parameter")
 
-    log_z_id = id(log_z)
-    policy_params = [
-        param
-        for _, param in policy.named_parameters()
-        if param.requires_grad and id(param) != log_z_id
-    ]
-    if not policy_params:
-        raise ValueError("policy must have at least one trainable parameter other than log_z")
-    if log_z_id in {id(param) for param in policy_params}:
-        raise RuntimeError("policy.log_z must not be included in the policy optimizer group")
+    policy_params = policy_parameters_excluding_log_z(policy)
 
     return torch.optim.Adam(
         [
@@ -42,7 +67,12 @@ def build_tb_optimizer(
 
 
 # Backwards-compatible alias for code that imported the former private helper.
+_build_policy_optimizer = build_policy_optimizer
 _build_tb_optimizer = build_tb_optimizer
 
 
-__all__ = ["build_tb_optimizer"]
+__all__ = [
+    "build_policy_optimizer",
+    "build_tb_optimizer",
+    "policy_parameters_excluding_log_z",
+]
