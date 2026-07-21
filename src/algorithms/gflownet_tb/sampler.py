@@ -42,6 +42,7 @@ def sample_tb_trajectory(
     sample_actions: bool,
     available_actions: list[int] | None = None,
     epsilon_uniform: float = 0.0,
+    action_generator: torch.Generator | None = None,
 ) -> TBTrajectory:
     return sample_tb_trajectories(
         file_paths=[file_path],
@@ -54,6 +55,7 @@ def sample_tb_trajectory(
         sample_actions=sample_actions,
         available_actions=available_actions,
         epsilon_uniform=epsilon_uniform,
+        action_generator=action_generator,
     )[0]
 
 
@@ -141,6 +143,21 @@ def _finish_rollout(
 _epsilon_mixed_probs = epsilon_mixed_probs
 
 
+def _sample_behavior_actions(
+    behavior_probs: torch.Tensor,
+    action_generator: torch.Generator | None,
+) -> torch.Tensor:
+    """Draw behavior actions while preserving the legacy default RNG path."""
+    if action_generator is None:
+        return Categorical(probs=behavior_probs).sample()
+    return torch.multinomial(
+        behavior_probs,
+        num_samples=1,
+        replacement=True,
+        generator=action_generator,
+    ).squeeze(-1)
+
+
 def sample_tb_trajectories(
     *,
     file_paths: list[str],
@@ -153,6 +170,7 @@ def sample_tb_trajectories(
     sample_actions: bool,
     available_actions: list[int] | None = None,
     epsilon_uniform: float = 0.0,
+    action_generator: torch.Generator | None = None,
 ) -> list[TBTrajectory]:
     rollouts = [
         _new_rollout(
@@ -199,7 +217,7 @@ def sample_tb_trajectories(
         probs = policy.masked_probs(logits, legal_rows)
         if sample_actions:
             behavior_probs = epsilon_mixed_probs(probs, legal_rows, epsilon_uniform)
-            actions = Categorical(probs=behavior_probs).sample()
+            actions = _sample_behavior_actions(behavior_probs, action_generator)
         else:
             actions = probs.argmax(dim=-1)
         log_pf_batch = policy.log_prob_legal_batch(logits, legal_rows, actions)
