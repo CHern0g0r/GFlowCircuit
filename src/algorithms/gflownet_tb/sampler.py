@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -8,7 +7,9 @@ import pyspiel
 import torch
 from torch.distributions import Categorical
 
+from src.algorithms.gflownet_tb.behavior import epsilon_mixed_probs
 from src.algorithms.gflownet_tb.policy import TBGFlowNetPolicy
+from src.algorithms.gflownet_tb.reward import transform_terminal_reward
 from src.algorithms.gflownet_tb.types import TBStep, TBTrajectory
 from src.baselines.resyn2 import OBS_DEPTH_IDX, OBS_SIZE_IDX
 from src.eval_metrics import comparable_return
@@ -108,9 +109,12 @@ def _finish_rollout(
         final_size=final_size,
         final_depth=final_depth,
     )
-    improvement = max(-reward_improvement_clip, min(reward_improvement_clip, comp_return))
-    terminal_reward = max(reward_eps, math.exp(float(reward_alpha) * improvement))
-    log_reward = float(math.log(terminal_reward))
+    transformed_reward = transform_terminal_reward(
+        improvement=comp_return,
+        reward_alpha=reward_alpha,
+        reward_eps=reward_eps,
+        reward_improvement_clip=reward_improvement_clip,
+    )
 
     if rollout.log_pf_terms:
         log_pf_sum = torch.stack(rollout.log_pf_terms).sum()
@@ -128,29 +132,13 @@ def _finish_rollout(
         comparable_return=comp_return,
         log_pf_sum=log_pf_sum,
         log_pb_sum=torch.zeros_like(log_pf_sum),
-        log_reward=log_reward,
-        terminal_reward=terminal_reward,
+        log_reward=transformed_reward.log_reward,
+        terminal_reward=transformed_reward.reward,
     )
 
 
-def _epsilon_mixed_probs(
-    policy_probs: torch.Tensor,
-    legal_actions: list[list[int]],
-    epsilon_uniform: float,
-) -> torch.Tensor:
-    epsilon_uniform = float(epsilon_uniform)
-    if epsilon_uniform < 0.0 or epsilon_uniform > 1.0:
-        raise ValueError(f"epsilon_uniform must be in [0, 1], got {epsilon_uniform}")
-    if epsilon_uniform == 0.0:
-        return policy_probs
-
-    uniform_probs = torch.zeros_like(policy_probs)
-    for row_idx, row_legal_actions in enumerate(legal_actions):
-        if not row_legal_actions:
-            continue
-        legal_idx = torch.tensor(row_legal_actions, dtype=torch.long, device=policy_probs.device)
-        uniform_probs[row_idx, legal_idx] = 1.0 / float(len(row_legal_actions))
-    return (1.0 - epsilon_uniform) * policy_probs + epsilon_uniform * uniform_probs
+# Backwards compatibility for callers that imported the former private helper.
+_epsilon_mixed_probs = epsilon_mixed_probs
 
 
 def sample_tb_trajectories(
@@ -210,7 +198,7 @@ def sample_tb_trajectories(
         logits = policy(obs_batch)
         probs = policy.masked_probs(logits, legal_rows)
         if sample_actions:
-            behavior_probs = _epsilon_mixed_probs(probs, legal_rows, epsilon_uniform)
+            behavior_probs = epsilon_mixed_probs(probs, legal_rows, epsilon_uniform)
             actions = Categorical(probs=behavior_probs).sample()
         else:
             actions = probs.argmax(dim=-1)

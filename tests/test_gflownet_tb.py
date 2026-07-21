@@ -9,17 +9,22 @@ from pathlib import Path
 import torch
 from torch import nn
 
-pyspiel_stub = types.ModuleType("pyspiel")
-pyspiel_stub.State = object
-sys.modules.setdefault("pyspiel", pyspiel_stub)
+try:
+    import pyspiel  # noqa: F401
+except ImportError:
+    pyspiel_stub = types.ModuleType("pyspiel")
+    pyspiel_stub.State = object
+    sys.modules.setdefault("pyspiel", pyspiel_stub)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from src.algorithms.gflownet_tb.policy import TBGFlowNetPolicy
-from src.algorithms.gflownet_tb.sampler import _epsilon_mixed_probs, sample_tb_trajectories
-from src.algorithms.gflownet_tb.trainer import _build_tb_optimizer, _tb_exploration_epsilon
+from src.algorithms.gflownet_tb.behavior import epsilon_mixed_probs
+from src.algorithms.gflownet_tb.optim import build_tb_optimizer
+from src.algorithms.gflownet_tb.sampler import sample_tb_trajectories
+from src.algorithms.gflownet_tb.trainer import _tb_exploration_epsilon
 from src.algorithms.gflownet_tb.eval import evaluate_tb
 
 
@@ -43,7 +48,7 @@ class GFlowNetTBTest(unittest.TestCase):
     def test_optimizer_uses_separate_log_z_learning_rate(self) -> None:
         policy = _policy()
 
-        optimizer = _build_tb_optimizer(
+        optimizer = build_tb_optimizer(
             policy,
             learning_rate=1e-3,
             log_z_learning_rate=1e-2,
@@ -66,14 +71,14 @@ class GFlowNetTBTest(unittest.TestCase):
 
     def test_optimizer_rejects_nonpositive_learning_rates(self) -> None:
         with self.assertRaisesRegex(ValueError, "learning_rate"):
-            _build_tb_optimizer(
+            build_tb_optimizer(
                 _policy(),
                 learning_rate=0.0,
                 log_z_learning_rate=1e-2,
             )
 
         with self.assertRaisesRegex(ValueError, "log_z_learning_rate"):
-            _build_tb_optimizer(
+            build_tb_optimizer(
                 _policy(),
                 learning_rate=1e-3,
                 log_z_learning_rate=-1e-2,
@@ -177,7 +182,7 @@ class GFlowNetTBTest(unittest.TestCase):
         )
         legal_actions = [[0, 2], [1]]
 
-        self.assertTrue(torch.allclose(_epsilon_mixed_probs(policy_probs, legal_actions, 0.0), policy_probs))
+        self.assertTrue(torch.allclose(epsilon_mixed_probs(policy_probs, legal_actions, 0.0), policy_probs))
         expected_uniform = torch.tensor(
             [
                 [0.5, 0.0, 0.5],
@@ -185,9 +190,9 @@ class GFlowNetTBTest(unittest.TestCase):
             ],
             dtype=torch.float32,
         )
-        self.assertTrue(torch.allclose(_epsilon_mixed_probs(policy_probs, legal_actions, 1.0), expected_uniform))
+        self.assertTrue(torch.allclose(epsilon_mixed_probs(policy_probs, legal_actions, 1.0), expected_uniform))
 
-        mixed = _epsilon_mixed_probs(policy_probs, legal_actions, 0.25)
+        mixed = epsilon_mixed_probs(policy_probs, legal_actions, 0.25)
         self.assertTrue(torch.allclose(mixed[:, 1], torch.tensor([0.0, 1.0])))
         self.assertTrue(torch.allclose(mixed.sum(dim=1), torch.ones(2)))
 
