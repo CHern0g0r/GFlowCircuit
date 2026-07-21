@@ -12,6 +12,7 @@ import torch
 from src.algorithms.gflownet_tb.exact import ExactNode, ExactTree, Prefix, ProbabilityFn
 from src.algorithms.gflownet_tb.policy import TBGFlowNetPolicy
 from src.algorithms.gflownet_tb.reward import transform_terminal_reward
+from src.algorithms.gflownet_tb.supervised_exact import PredictionFn
 from src.baselines.resyn2 import OBS_DEPTH_IDX, OBS_SIZE_IDX
 from src.eval_metrics import comparable_return
 from src.utils import Observation, ZhuVectorState, filter_legal_actions, resolve_vector_action_ids
@@ -153,6 +154,18 @@ def neural_probability_fn(*, tree: ExactTree, policy: TBGFlowNetPolicy) -> Proba
     return probabilities
 
 
+def neural_prediction_fn(*, tree: ExactTree, policy: TBGFlowNetPolicy) -> PredictionFn:
+    """Return unmasked logits and legal-action probabilities for supervised fitting."""
+
+    def predict(prefixes: list[Prefix]) -> tuple[torch.Tensor, torch.Tensor]:
+        observations = [tree.nodes[prefix].payload for prefix in prefixes]
+        logits = policy(observations)
+        legal_rows = [list(tree.nodes[prefix].legal_actions) for prefix in prefixes]
+        return logits, policy.masked_probs(logits, legal_rows)
+
+    return predict
+
+
 def _update_tensor_hash(hasher: Any, name: str, tensor: torch.Tensor | None) -> None:
     hasher.update(name.encode("utf-8"))
     if tensor is None:
@@ -227,6 +240,7 @@ __all__ = [
     "CircuitEnumeration",
     "analyze_observation_aliases",
     "enumerate_circuit_tree",
+    "neural_prediction_fn",
     "neural_probability_fn",
     "observation_signature",
 ]

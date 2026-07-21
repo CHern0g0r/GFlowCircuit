@@ -5,6 +5,7 @@ from typing import Any
 __all__ = [
     "TBGFlowNetPolicy",
     "TBGFlowNetTrainer",
+    "build_policy_optimizer",
     "build_tb_optimizer",
     "build_tb_policy",
     "epsilon_mixed_probs",
@@ -29,6 +30,10 @@ def __getattr__(name: str) -> Any:
         from .optim import build_tb_optimizer
 
         return build_tb_optimizer
+    if name == "build_policy_optimizer":
+        from .optim import build_policy_optimizer
+
+        return build_policy_optimizer
     if name == "epsilon_mixed_probs":
         from .behavior import epsilon_mixed_probs
 

@@ -302,6 +302,7 @@ def evaluate_exact_policy(
     probability_fn: ProbabilityFn,
     update: int,
     gates: ExactGateConfig | None = None,
+    evaluation_batch_size: int = 256,
 ) -> ExactEvaluation:
     gates = gates or ExactGateConfig()
     was_training = policy.training
@@ -310,6 +311,7 @@ def evaluate_exact_policy(
         tables, normalization_error, illegal_probability, probabilities_finite = _probability_tables(
             tree=tree,
             probability_fn=probability_fn,
+            evaluation_batch_size=evaluation_batch_size,
         )
     finally:
         policy.train(was_training)
