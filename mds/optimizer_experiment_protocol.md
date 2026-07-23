@@ -147,6 +147,35 @@ Reject the claim that 800 is demonstrably insufficient if none of those changes
 reaches its threshold and all health gates pass; retain 800 as a candidate
 budget.
 
+### Results
+
+The 100-trajectory preflight (`13185`) and six full runs (`13611`) completed on
+`bc0` and `dalu`, seeds 0--2, with checkpoints at 200, 400, and 800
+trajectories. The resolved `log_z_learning_rate` was `0.01`. The aggregate
+report (`13643`) validated all run artifacts and produced the diagnosis tables
+and plots.
+
+The global-offset hypothesis is supported. At 800 trajectories, the pooled
+median bias fraction was `0.999860`. Analytic recentering removed median
+fractions `0.999921` and `0.999921` of validation MSE on `bc0`
+(`fixed_uniform` and `fresh_on_policy`), and `0.999828` and `0.999848` on
+`dalu`. Thus nearly all learned-`logZ` TB loss was a common residual offset.
+
+The undertraining hypothesis is inconclusive because the active baseline was
+not healthy at 800 trajectories. None of the 400-to-800 changes met its
+undertraining threshold:
+
+| Circuit | Centered-RMS decrease | Archive-HV gain | Best-of-`N` AUC increase |
+| --- | ---: | ---: | ---: |
+| `bc0` | -0.276359 | 0.000898 | -0.003319 |
+| `dalu` | -0.391053 | 0.002668 | 0.006512 |
+
+All twelve circuit/seed/validation-stratum endpoints failed the
+`logZ_target_gap`, bias-fraction, and standardized-bias gates, while the runs
+remained numerically finite. More trajectories under the unchanged active
+configuration are therefore not justified. Proceed to Experiment 3 and repair
+`logZ` calibration before selecting a trajectory budget.
+
 ## Experiment 3: calibrated `logZ` initialization
 
 ### Hypothesis
