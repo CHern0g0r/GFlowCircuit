@@ -1,0 +1,34 @@
+# @package _global_
+#
+# Frozen shared policy backbone selected by the exact-conditional study.
+# Evidence: backbone_selection commit e173756 and
+# artifacts/backbone_selection/report/selection_summary.json on that branch.
+#
+# Selected candidate: C1_head
+# Resolved architecture checksum:
+# 783882261534835c1f8f62cc22dcf684e736b6d58857d49673182dab04514dbe
+
+encoder:
+  type: hybrid
+  merge: concat
+  graph:
+    type: zhu_gcn
+    input_graph: true
+    hidden_dim: 12
+    out_dim: 4
+    num_layers: 4
+    dropout: 0.0
+    pooling: mean
+    node_feature_mode: auto
+  vector:
+    type: vector_mlp
+    source: zhu10
+    out_dim: 28
+    hidden_dims: []
+
+head:
+  type: mlp
+  hidden_dims: [128, 128]
+  activation: gelu
+  layer_norm: true
+  dropout: 0.0

@@ -2,7 +2,7 @@ defaults:
   - default
   - environment: default
   - algorithm: gflownet_tb
-  - override encoder: gcn
+  - model: backbone_selected
   - _self_
 
 run_name: gflownet_tb_mcnc
@@ -10,14 +10,6 @@ dataset_cfg: cfg/data/mcnc_zhu10.yaml
 
 policy:
   type: reinforce
-
-encoder:
-  num_layers: 4
-  pooling: mean
-
-head:
-  type: mlp
-  hidden_dims: [128, 64]
 
 reward:
   type: zhu_size
