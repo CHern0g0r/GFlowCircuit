@@ -149,32 +149,18 @@ budget.
 
 ### Results
 
-The 100-trajectory preflight (`13185`) and six full runs (`13611`) completed on
-`bc0` and `dalu`, seeds 0--2, with checkpoints at 200, 400, and 800
-trajectories. The resolved `log_z_learning_rate` was `0.01`. The aggregate
-report (`13643`) validated all run artifacts and produced the diagnosis tables
-and plots.
+The C1_head rerun completed for all six `bc0`/`dalu` seed runs (array `16628`;
+aggregate report `16645`) with no numerical failures. At 800 trajectories, the
+global-offset hypothesis is supported: the pooled median bias fraction is
+`0.997182`, and analytic recentering removes `0.996551`--`0.997333` of
+validation MSE.
 
-The global-offset hypothesis is supported. At 800 trajectories, the pooled
-median bias fraction was `0.999860`. Analytic recentering removed median
-fractions `0.999921` and `0.999921` of validation MSE on `bc0`
-(`fixed_uniform` and `fresh_on_policy`), and `0.999828` and `0.999848` on
-`dalu`. Thus nearly all learned-`logZ` TB loss was a common residual offset.
-
-The undertraining hypothesis is inconclusive because the active baseline was
-not healthy at 800 trajectories. None of the 400-to-800 changes met its
-undertraining threshold:
-
-| Circuit | Centered-RMS decrease | Archive-HV gain | Best-of-`N` AUC increase |
-| --- | ---: | ---: | ---: |
-| `bc0` | -0.276359 | 0.000898 | -0.003319 |
-| `dalu` | -0.391053 | 0.002668 | 0.006512 |
-
-All twelve circuit/seed/validation-stratum endpoints failed the
-`logZ_target_gap`, bias-fraction, and standardized-bias gates, while the runs
-remained numerically finite. More trajectories under the unchanged active
-configuration are therefore not justified. Proceed to Experiment 3 and repair
-`logZ` calibration before selecting a trajectory budget.
+Undertraining is technically supported only by `dalu` best-of-N AUC improving
+19.92% from 400 to 800 trajectories; `bc0` does not meet a threshold, centered
+RMS worsens on both circuits, and hypervolume gains stay below threshold. All
+12 endpoints fail the `logZ_target_gap`, bias-fraction, and standardized-bias
+health gates. Proceed to Experiment 3 (`logZ` calibration), retaining this
+baseline as the control; see `mds/experiment_2_c1_head_report.md`.
 
 ## Experiment 3: calibrated `logZ` initialization
 
