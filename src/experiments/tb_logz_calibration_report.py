@@ -109,7 +109,16 @@ def oscillation_diagnostics(target_gaps: Sequence[float]) -> dict[str, Any]:
     }
 
 
-def _validate_run(run_dir: Path, *, variant: str, circuit: str, seed: int) -> dict[str, Any]:
+def _validate_run(
+    run_dir: Path,
+    *,
+    variant: str,
+    circuit: str,
+    seed: int,
+    expected_experiment: str = "calibrated_log_z_initialization",
+    schema_version: int = 2,
+    log_z_learning_rate: float | None = None,
+) -> dict[str, Any]:
     summary = _read_json(run_dir / "run_summary.json")
     resolved = _read_json(run_dir / "resolved_config.json")
     metadata = _read_json(run_dir / "run_metadata.json")
@@ -118,8 +127,13 @@ def _validate_run(run_dir: Path, *, variant: str, circuit: str, seed: int) -> di
     identity = (summary.get("variant"), summary.get("circuit"), int(summary.get("seed", -1)))
     if identity != (variant, circuit, seed):
         raise ArtifactValidationError(f"run identity mismatch: {run_dir}: {identity}")
-    if resolved.get("schema_version") != 2 or resolved.get("experiment") != "calibrated_log_z_initialization":
-        raise ArtifactValidationError(f"wrong Experiment 3 schema: {run_dir}")
+    if resolved.get("schema_version") != schema_version or resolved.get("experiment") != expected_experiment:
+        raise ArtifactValidationError(f"wrong experiment schema: {run_dir}")
+    if log_z_learning_rate is not None and not math.isclose(
+        float(resolved.get("log_z_learning_rate_resolved", math.nan)),
+        float(log_z_learning_rate), rel_tol=0.0, abs_tol=1e-12,
+    ):
+        raise ArtifactValidationError(f"logZ learning-rate mismatch: {run_dir}")
     if summary.get("scientific_configuration_fingerprint") != resolved.get("scientific_configuration_fingerprint"):
         raise ArtifactValidationError(f"configuration fingerprint mismatch: {run_dir}")
     if summary.get("paired_configuration_fingerprint") != resolved.get("paired_configuration_fingerprint"):

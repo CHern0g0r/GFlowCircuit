@@ -61,12 +61,18 @@ RUN_SCHEMA_VERSION = 2
 CALIBRATION_TRAJECTORIES = 64
 CALIBRATION_EPSILON = 0.5
 EXPECTED_VARIANTS = ("z0", "zcal")
+EXPERIMENT_4_RATES = (0.003, 0.01, 0.03, 0.1)
 
 
 def _resolved_configuration(args: argparse.Namespace, cfg: Any, circuit_path: Path) -> dict[str, Any]:
     from omegaconf import OmegaConf
 
-    configured_log_z_lr = _tb_value(cfg, "log_z_learning_rate", None, preserve_none=True)
+    explicit_log_z_lr = getattr(args, "log_z_learning_rate", None)
+    configured_log_z_lr = (
+        float(explicit_log_z_lr)
+        if explicit_log_z_lr is not None
+        else _tb_value(cfg, "log_z_learning_rate", None, preserve_none=True)
+    )
     policy_lr = float(cfg.learning_rate)
     resolved_log_z_lr = 10.0 * policy_lr if configured_log_z_lr is None else float(configured_log_z_lr)
     configured_batch_size = _tb_value(cfg, "batch_size", None, preserve_none=True)
@@ -75,8 +81,8 @@ def _resolved_configuration(args: argparse.Namespace, cfg: Any, circuit_path: Pa
     actions_raw = OmegaConf.select(cfg, "available_actions")
     actions = None if actions_raw is None else [int(action) for action in actions_raw]
     values = {
-        "schema_version": RUN_SCHEMA_VERSION,
-        "experiment": "calibrated_log_z_initialization",
+        "schema_version": int(getattr(args, "run_schema_version", RUN_SCHEMA_VERSION)),
+        "experiment": str(getattr(args, "experiment_name", "calibrated_log_z_initialization")),
         "variant": str(args.variant).lower(),
         "config_name": args.config_name,
         "circuit": circuit_path.stem,
@@ -128,17 +134,30 @@ def _resolved_configuration(args: argparse.Namespace, cfg: Any, circuit_path: Pa
     values["scientific_configuration"] = scientific
     values["scientific_configuration_fingerprint"] = canonical_sha256(scientific)
     values["paired_configuration_fingerprint"] = canonical_sha256(paired)
+    if values["experiment"] == "log_z_learning_rate":
+        pairing = {
+            key: value for key, value in scientific.items()
+            if key not in {"variant", "log_z_learning_rate_configured", "log_z_learning_rate_resolved"}
+        }
+        values["pairing_configuration_fingerprint"] = canonical_sha256(pairing)
     return values
 
 
 def _validate_configuration(resolved: Mapping[str, Any]) -> None:
+    experiment = str(resolved["experiment"])
+    expected_rate = 0.01
+    if experiment == "log_z_learning_rate":
+        rate = float(resolved["log_z_learning_rate_resolved"])
+        if rate not in EXPERIMENT_4_RATES:
+            raise ValueError(f"Experiment 4 logZ rate must be one of {EXPERIMENT_4_RATES}, got {rate}")
+        expected_rate = rate
     required = {
         "variant": resolved["variant"],
         "num_steps": 20,
         "available_actions": list(range(7)),
         "trajectories_per_update": 4,
         "policy_learning_rate": 0.001,
-        "log_z_learning_rate_resolved": 0.01,
+        "log_z_learning_rate_resolved": expected_rate,
         "reward_alpha": 4.0,
         "reward_eps": 1e-8,
         "reward_improvement_clip": 2.0,
@@ -156,18 +175,20 @@ def _validate_configuration(resolved: Mapping[str, Any]) -> None:
         for key, expected in required.items() if resolved.get(key) != expected
     }
     if failures:
-        raise ValueError(f"configuration no longer matches Experiment 3: {failures}")
+        label = "Experiment 4" if experiment == "log_z_learning_rate" else "Experiment 3"
+        raise ValueError(f"configuration no longer matches {label}: {failures}")
     if not resolved["exploration_epsilon_enabled"]:
         raise ValueError("active epsilon schedule is disabled")
     if int(resolved["schedule_trajectories"]) != 800:
-        raise ValueError("Experiment 3 retains the 800-trajectory epsilon horizon")
+        raise ValueError(f"{experiment} retains the 800-trajectory epsilon horizon")
 
 
 def _calibration_payload(
     trajectories: Sequence[Any], *, seed: int, initial_score: Mapping[str, Any], target: float,
+    schema_version: int = RUN_SCHEMA_VERSION,
 ) -> dict[str, Any]:
     return {
-        "schema_version": RUN_SCHEMA_VERSION,
+        "schema_version": int(schema_version),
         "rng_seed": int(seed),
         "epsilon_uniform": CALIBRATION_EPSILON,
         "batch_order": "collection_order",
@@ -207,8 +228,8 @@ def _checkpoint_payload(
     metadata: Mapping[str, Any], numerical_failure: str | None,
 ) -> dict[str, Any]:
     return {
-        "schema_version": RUN_SCHEMA_VERSION,
-        "experiment": "calibrated_log_z_initialization",
+        "schema_version": int(resolved["schema_version"]),
+        "experiment": str(resolved["experiment"]),
         "variant": resolved["variant"],
         "policy": policy.state_dict(),
         "optimizer": optimizer.state_dict(),
@@ -273,6 +294,8 @@ def run_experiment(args: argparse.Namespace) -> int:
     circuit_path = _resolve_circuit(args.circuit)
     device = _resolve_device(args.device)
     cfg = _compose_project_config(args.config_name)
+    if getattr(args, "log_z_learning_rate", None) is not None:
+        cfg.tb.log_z_learning_rate = float(args.log_z_learning_rate)
     cfg.output_dir = str(output_dir)
     resolved = _resolved_configuration(args, cfg, circuit_path)
     _validate_configuration(resolved)
@@ -297,8 +320,8 @@ def run_experiment(args: argparse.Namespace) -> int:
     )}
     source_checksum = _source_tree_sha256(_repo_root())
     metadata: dict[str, Any] = {
-        "schema_version": RUN_SCHEMA_VERSION,
-        "experiment": "calibrated_log_z_initialization",
+        "schema_version": int(resolved["schema_version"]),
+        "experiment": str(resolved["experiment"]),
         "variant": resolved["variant"],
         "circuit_sha256": _file_sha256(circuit_path),
         "source_tree_sha256": source_checksum,
@@ -360,7 +383,7 @@ def run_experiment(args: argparse.Namespace) -> int:
                 sample_actions=True, available_actions=available_actions,
                 epsilon_uniform=CALIBRATION_EPSILON, action_generator=train_generator,
             ))
-        torch.save({"schema_version": RUN_SCHEMA_VERSION, "rng_seed": seeds["evaluation_fixed_validation"],
+        torch.save({"schema_version": int(resolved["schema_version"]), "rng_seed": seeds["evaluation_fixed_validation"],
                     "trajectories": fixed_trajectories}, fixed_path)
         fixed_checksum = _file_sha256(fixed_path)
         initial_fixed = _score_trajectory_set(policy, fixed_trajectories,
@@ -370,8 +393,11 @@ def run_experiment(args: argparse.Namespace) -> int:
                                                     reward_eps=float(resolved["reward_eps"]),
                                                     reward_improvement_clip=float(resolved["reward_improvement_clip"]))
         target = calibration_target(policy, calibration_trajectories)
-        torch.save(_calibration_payload(calibration_trajectories, seed=seeds["training_actions"],
-                                        initial_score=initial_calibration, target=target), calibration_path)
+        torch.save(_calibration_payload(
+            calibration_trajectories, seed=seeds["training_actions"],
+            initial_score=initial_calibration, target=target,
+            schema_version=int(resolved["schema_version"]),
+        ), calibration_path)
         calibration_checksum = _file_sha256(calibration_path)
         assigned = initialize_log_z(policy, resolved["variant"], target)
         metadata.update({
@@ -580,7 +606,8 @@ def run_experiment(args: argparse.Namespace) -> int:
                          fixed_checksum=fixed_checksum, calibration_checksum=calibration_checksum,
                          resolved=resolved, metadata=metadata, numerical_failure=numerical_failure)
         _write_json(output_dir / "run_summary.json", {
-            "schema_version": RUN_SCHEMA_VERSION, "complete": False, "variant": resolved["variant"],
+            "schema_version": int(resolved["schema_version"]), "complete": False, "variant": resolved["variant"],
+            "experiment": str(resolved["experiment"]),
             "numerical_failure": numerical_failure, "traceback": traceback.format_exc(),
             "emergency_checkpoint": str(emergency), "counters": counters, "milestones": milestone_rows,
             "scientific_configuration_fingerprint": resolved["scientific_configuration_fingerprint"],
@@ -589,7 +616,7 @@ def run_experiment(args: argparse.Namespace) -> int:
         })
         raise
     summary = {
-        "schema_version": RUN_SCHEMA_VERSION, "experiment": "calibrated_log_z_initialization",
+        "schema_version": int(resolved["schema_version"]), "experiment": str(resolved["experiment"]),
         "complete": True, "numerical_failure": None, "variant": resolved["variant"],
         "circuit": circuit_path.stem, "seed": int(args.seed),
         "scientific_configuration_fingerprint": resolved["scientific_configuration_fingerprint"],
