@@ -24,6 +24,7 @@ EXPECTED_INITIALIZATIONS = ("z0", "zcal")
 EXPECTED_RATES = (0.003, 0.01, 0.03, 0.1)
 SCREEN_SEEDS = (0, 1)
 CONFIRMATION_SEEDS = (0, 1, 2)
+DALU_REPLICATION_SEEDS = (0, 1, 2)
 EXPECTED_STRATA = ("fixed_uniform", "fresh_on_policy")
 EXPECTED_MILESTONES = (200, 400, 800)
 FINAL_BUDGET = 800
@@ -138,43 +139,61 @@ def _paired_standard_error(left: Sequence[float], right: Sequence[float]) -> flo
     return float(np.std(differences, ddof=1) / math.sqrt(len(differences)))
 
 
-def _validate_screen_pairing(
+def _validate_factorial_pairing(
     runs: Mapping[tuple[str, float, str, int], Mapping[str, Any]],
+    *,
+    circuit: str,
+    seeds: Sequence[int],
 ) -> dict[str, Any]:
     sources = {str(run["metadata"]["source_tree_sha256"]) for run in runs.values()}
     pairing = {str(run["resolved"].get("pairing_configuration_fingerprint")) for run in runs.values()}
     if len(sources) != 1 or len(pairing) != 1 or "None" in pairing:
-        raise ArtifactValidationError("screen source tree or pairing configuration differs")
-    for seed in SCREEN_SEEDS:
-        seed_runs = [run for key, run in runs.items() if key[2:] == ("bc0", seed)]
+        raise ArtifactValidationError(f"{circuit} source tree or pairing configuration differs")
+    for seed in seeds:
+        seed_runs = [run for key, run in runs.items() if key[2:] == (circuit, seed)]
+        if len(seed_runs) != len(EXPECTED_INITIALIZATIONS) * len(EXPECTED_RATES):
+            raise ArtifactValidationError(
+                f"incomplete {circuit} pairing set for seed {seed}: {len(seed_runs)} runs"
+            )
         for key in ("pre_calibration_parameter_checksum", "fixed_sequence_checksum", "calibration_sequence_checksum"):
             if len({str(run["summary"][key]) for run in seed_runs}) != 1:
-                raise ArtifactValidationError(f"screen pairing mismatch for {key}, seed {seed}")
+                raise ArtifactValidationError(f"{circuit} pairing mismatch for {key}, seed {seed}")
         for initialization in EXPECTED_INITIALIZATIONS:
-            initialized = [run for (variant, _, circuit, run_seed), run in runs.items()
-                           if variant == initialization and circuit == "bc0" and run_seed == seed]
+            initialized = [run for (variant, _, run_circuit, run_seed), run in runs.items()
+                           if variant == initialization and run_circuit == circuit and run_seed == seed]
             if len({str(run["summary"]["post_initialization_parameter_checksum"]) for run in initialized}) != 1:
                 raise ArtifactValidationError(
-                    f"post-initialization pairing mismatch for {initialization}, seed {seed}"
+                    f"{circuit} post-initialization pairing mismatch for {initialization}, seed {seed}"
                 )
     return {"source_tree_sha256": next(iter(sources)), "pairing_configuration_fingerprint": next(iter(pairing))}
 
 
+def _validate_screen_pairing(
+    runs: Mapping[tuple[str, float, str, int], Mapping[str, Any]],
+) -> dict[str, Any]:
+    return _validate_factorial_pairing(runs, circuit="bc0", seeds=SCREEN_SEEDS)
+
+
 def classify_screen(
     runs: Mapping[tuple[str, float, str, int], Mapping[str, Any]],
+    *,
+    circuit: str = "bc0",
+    seeds: Sequence[int] = SCREEN_SEEDS,
+    success_decision: str = "continue_to_dalu",
+    failure_decision: str = "reject_no_healthy_screen_candidate",
 ) -> dict[str, Any]:
     health_rows = _gate_rows(runs)
     cells: list[dict[str, Any]] = []
     values: dict[tuple[str, float], dict[str, Any]] = {}
     for initialization in EXPECTED_INITIALIZATIONS:
-        control = _cell_values(runs, initialization, 0.01, "bc0", SCREEN_SEEDS)
+        control = _cell_values(runs, initialization, 0.01, circuit, seeds)
         for rate in EXPECTED_RATES:
-            current = _cell_values(runs, initialization, rate, "bc0", SCREEN_SEEDS)
+            current = _cell_values(runs, initialization, rate, circuit, seeds)
             values[(initialization, rate)] = current
             final_gates = [row for row in health_rows if row["initialization"] == initialization
                            and row["log_z_learning_rate"] == rate and row["decisive"]]
             health_pass = bool(final_gates) and all(bool(row["pass"]) for row in final_gates)
-            oscillations = [runs[(initialization, rate, "bc0", seed)]["oscillation"] for seed in SCREEN_SEEDS]
+            oscillations = [runs[(initialization, rate, circuit, seed)]["oscillation"] for seed in seeds]
             oscillation_pass = not any(bool(row["persistent"]) for row in oscillations)
             denominator = max(float(control["median_fixed_bias_fraction"]), 1e-12)
             bias_ratio = float(current["median_fixed_bias_fraction"]) / denominator
@@ -245,7 +264,7 @@ def classify_screen(
             "dalu_source": "experiment3" if math.isclose(float(row["log_z_learning_rate"]), 0.01) else "experiment4",
         })
     return {
-        "decision": "continue_to_dalu" if candidates else "reject_no_healthy_screen_candidate",
+        "decision": success_decision if candidates else failure_decision,
         "candidates": candidates,
         "cells": cells,
         "simplicity": simplicity,
@@ -413,6 +432,175 @@ def _validate_external_control(candidate: Mapping[str, Any], control: Mapping[st
             raise ArtifactValidationError(f"Experiment 3 control pairing mismatch: {key}")
 
 
+def _validate_cross_circuit_pairing(
+    bc0_runs: Mapping[tuple[str, float, str, int], Mapping[str, Any]],
+    dalu_runs: Mapping[tuple[str, float, str, int], Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Validate the invariants that should remain equal when only the circuit changes."""
+    source_pairs: set[tuple[str, str]] = set()
+    for initialization in EXPECTED_INITIALIZATIONS:
+        for rate in EXPECTED_RATES:
+            for seed in SCREEN_SEEDS:
+                bc0 = bc0_runs[(initialization, rate, "bc0", seed)]
+                dalu = dalu_runs[(initialization, rate, "dalu", seed)]
+                _validate_scientific_compatibility(bc0, dalu)
+                if (bc0["summary"].get("pre_calibration_parameter_checksum")
+                        != dalu["summary"].get("pre_calibration_parameter_checksum")):
+                    raise ArtifactValidationError(
+                        f"bc0/dalu initial-policy mismatch for {initialization}, rate {rate}, seed {seed}"
+                    )
+                if (bc0["resolved"].get("pairing_configuration_fingerprint")
+                        != dalu["resolved"].get("pairing_configuration_fingerprint")):
+                    raise ArtifactValidationError(
+                        f"bc0/dalu pairing-configuration mismatch for {initialization}, rate {rate}, seed {seed}"
+                    )
+                source_pairs.add((
+                    str(bc0["metadata"]["source_tree_sha256"]),
+                    str(dalu["metadata"]["source_tree_sha256"]),
+                ))
+    return {
+        "paired_seeds": list(SCREEN_SEEDS),
+        "source_tree_pairs": [list(pair) for pair in sorted(source_pairs)],
+        "source_provenance_difference_allowed": True,
+        "circuit_specific_sequence_checksums_expected": True,
+    }
+
+
+def _cross_circuit_rows(
+    bc0_runs: Mapping[tuple[str, float, str, int], Mapping[str, Any]],
+    dalu_runs: Mapping[tuple[str, float, str, int], Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for initialization in EXPECTED_INITIALIZATIONS:
+        for rate in EXPECTED_RATES:
+            for seed in SCREEN_SEEDS:
+                bc0 = bc0_runs[(initialization, rate, "bc0", seed)]
+                dalu = dalu_runs[(initialization, rate, "dalu", seed)]
+                for budget in EXPECTED_MILESTONES:
+                    for stratum in EXPECTED_STRATA:
+                        bc0_milestone = bc0["milestones"][budget]
+                        dalu_milestone = dalu["milestones"][budget]
+                        bc0_residual = bc0_milestone[stratum]["residual"]
+                        dalu_residual = dalu_milestone[stratum]["residual"]
+                        bc0_gap = abs(float(bc0_residual["log_z_target_gap"]))
+                        dalu_gap = abs(float(dalu_residual["log_z_target_gap"]))
+                        bc0_bias = float(bc0_residual["bias_fraction"])
+                        dalu_bias = float(dalu_residual["bias_fraction"])
+                        bc0_log_z = float(bc0_residual["learned_log_z"])
+                        dalu_log_z = float(dalu_residual["learned_log_z"])
+                        bc0_hv = float(bc0_milestone["training_archive"]["hypervolume"])
+                        dalu_hv = float(dalu_milestone["training_archive"]["hypervolume"])
+                        rows.append({
+                            "initialization": initialization,
+                            "log_z_learning_rate": rate,
+                            "seed": seed,
+                            "trajectory_budget": budget,
+                            "stratum": stratum,
+                            "bc0_absolute_log_z_target_gap": bc0_gap,
+                            "dalu_absolute_log_z_target_gap": dalu_gap,
+                            "dalu_minus_bc0_absolute_gap": dalu_gap - bc0_gap,
+                            "bc0_bias_fraction": bc0_bias,
+                            "dalu_bias_fraction": dalu_bias,
+                            "dalu_minus_bc0_bias_fraction": dalu_bias - bc0_bias,
+                            "bc0_learned_log_z": bc0_log_z,
+                            "dalu_learned_log_z": dalu_log_z,
+                            "dalu_minus_bc0_learned_log_z": dalu_log_z - bc0_log_z,
+                            "bc0_archive_hypervolume": bc0_hv,
+                            "dalu_archive_hypervolume": dalu_hv,
+                            "dalu_minus_bc0_archive_hypervolume": dalu_hv - bc0_hv,
+                        })
+    return rows
+
+
+def dalu_replication_report(args: argparse.Namespace) -> int:
+    """Validate the full dalu factorial and compare its paired seeds with bc0."""
+    output_dir = args.output_dir.resolve()
+    try:
+        bc0_root = args.bc0_runs_root.resolve()
+        dalu_root = args.dalu_runs_root.resolve()
+        bc0_runs = {(initialization, rate, "bc0", seed): _load_experiment4_run(
+                        bc0_root, initialization=initialization, rate=rate,
+                        circuit="bc0", seed=seed)
+                    for initialization in EXPECTED_INITIALIZATIONS for rate in EXPECTED_RATES
+                    for seed in SCREEN_SEEDS}
+        dalu_runs = {(initialization, rate, "dalu", seed): _load_experiment4_run(
+                        dalu_root, initialization=initialization, rate=rate,
+                        circuit="dalu", seed=seed)
+                     for initialization in EXPECTED_INITIALIZATIONS for rate in EXPECTED_RATES
+                     for seed in DALU_REPLICATION_SEEDS}
+        bc0_provenance = _validate_factorial_pairing(
+            bc0_runs, circuit="bc0", seeds=SCREEN_SEEDS,
+        )
+        dalu_provenance = _validate_factorial_pairing(
+            dalu_runs, circuit="dalu", seeds=DALU_REPLICATION_SEEDS,
+        )
+        cross_circuit = _validate_cross_circuit_pairing(bc0_runs, dalu_runs)
+        decision = classify_screen(
+            dalu_runs,
+            circuit="dalu",
+            seeds=DALU_REPLICATION_SEEDS,
+            success_decision="dalu_replication_has_eligible_cells",
+            failure_decision="dalu_replication_no_eligible_cells",
+        )
+        eligible_cells = [{
+            key: candidate[key]
+            for key in ("rank", "initialization", "log_z_learning_rate", "rate_slug")
+        } for candidate in decision.pop("candidates")]
+        decision.update({
+            "schema_version": SCHEMA_VERSION,
+            "complete": True,
+            "phase": "dalu_full_factorial_replication",
+            "run_count": len(dalu_runs),
+            "dalu_seeds": list(DALU_REPLICATION_SEEDS),
+            "paired_bc0_seeds": list(SCREEN_SEEDS),
+            "eligible_cells_descriptive_only": eligible_cells,
+            "changes_original_bc0_decision": False,
+            "bc0_provenance": bc0_provenance,
+            "dalu_provenance": dalu_provenance,
+            "cross_circuit_validation": cross_circuit,
+        })
+        decision["plots"] = _write_common_tables(output_dir, dalu_runs, decision, prefix="dalu")
+        comparison_rows = _cross_circuit_rows(bc0_runs, dalu_runs)
+        _write_csv(output_dir / "cross_circuit_paired_metrics.csv", comparison_rows)
+        _write_json(output_dir / "decision_summary.json", decision)
+        _write_csv(output_dir / "simplicity.csv", decision["simplicity"])
+        _write_csv(output_dir / "phase_ledger.csv", [{
+            "experiment": 4,
+            "phase": "dalu_full_factorial_replication",
+            "status": decision["decision"],
+            "run_count": len(dalu_runs),
+            "eligible_cell_count": len(eligible_cells),
+            "artifact_path": str(output_dir),
+        }])
+        (output_dir / "decision_report.md").write_text(
+            "# Experiment 4 dalu full-factorial replication\n\n"
+            f"Descriptive result: **{decision['decision']}**\n\n"
+            f"Eligible dalu cells under the original screen rules: "
+            f"`{json.dumps(eligible_cells, sort_keys=True)}`\n\n"
+            "This forced replication is descriptive. It does not override the completed bc0 "
+            "screen decision and does not authorize an unhealthy fallback. Paired circuit "
+            "comparisons use seeds 0--1; dalu seed 2 is additional replication.\n",
+            encoding="utf-8",
+        )
+        print(json.dumps(decision, indent=2, sort_keys=True))
+        return 0
+    except FileNotFoundError as exc:
+        _write_json(output_dir / "decision_summary.json", {
+            "complete": False, "failure_type": "incomplete_run_set", "message": str(exc),
+        })
+        return 2
+    except IncompleteRunSetError as exc:
+        _write_json(output_dir / "decision_summary.json", {
+            "complete": False, "failure_type": "incomplete_run_set", "message": str(exc),
+        })
+        return 2
+    except Exception as exc:
+        _write_json(output_dir / "decision_summary.json", {
+            "complete": False, "failure_type": "artifact_or_execution_failure", "message": str(exc),
+        })
+        return 1
+
+
 def classify_confirmation(
     screen_runs: Mapping[tuple[str, float, str, int], Mapping[str, Any]],
     dalu_runs: Mapping[tuple[str, float, str, int], Mapping[str, Any]],
@@ -547,8 +735,18 @@ def add_report_parsers(subparsers: argparse._SubParsersAction) -> None:
     final.add_argument("--output-dir", type=Path, required=True)
     final.set_defaults(handler=final_report)
 
+    replication = subparsers.add_parser(
+        "dalu-replication-report",
+        help="validate the full dalu factorial and compare paired runs with bc0",
+    )
+    replication.add_argument("--bc0-runs-root", type=Path, required=True)
+    replication.add_argument("--dalu-runs-root", type=Path, required=True)
+    replication.add_argument("--output-dir", type=Path, required=True)
+    replication.set_defaults(handler=dalu_replication_report)
+
 
 __all__ = [
-    "add_report_parsers", "classify_confirmation", "classify_screen", "final_report",
-    "rate_slug", "screen_report",
+    "DALU_REPLICATION_SEEDS", "add_report_parsers", "classify_confirmation",
+    "classify_screen", "dalu_replication_report", "final_report", "rate_slug",
+    "screen_report",
 ]

@@ -11,13 +11,16 @@ from src.experiments.tb_logz_calibration_report import oscillation_diagnostics
 from src.experiments.tb_logz_learning_rate_report import (
     ArtifactValidationError,
     CONFIRMATION_SEEDS,
+    DALU_REPLICATION_SEEDS,
     EXPECTED_INITIALIZATIONS,
     EXPECTED_RATES,
     SCREEN_SEEDS,
     _COMPATIBILITY_KEYS,
+    _cross_circuit_rows,
     _validate_external_control,
     classify_confirmation,
     classify_screen,
+    dalu_replication_report,
     rate_slug,
     screen_report,
 )
@@ -68,6 +71,18 @@ def _screen_runs() -> dict:
                     hypervolume=0.2 + (0.001 if initialization == "zcal" else 0.0),
                 )
     return result
+
+
+def _dalu_runs() -> dict:
+    return {
+        (initialization, rate, "dalu", seed): _run(
+            gap=0.02 + abs(math.log10(rate) - math.log10(0.01)) * 0.01,
+            bias=0.01,
+        )
+        for initialization in EXPECTED_INITIALIZATIONS
+        for rate in EXPECTED_RATES
+        for seed in DALU_REPLICATION_SEEDS
+    }
 
 
 class ConfigurationTest(unittest.TestCase):
@@ -144,6 +159,35 @@ class ScreenDecisionTest(unittest.TestCase):
         five_changes = [1.0] * 30 + [-1.0] * 30 + [1.0] * 30 + [-1.0] * 30 + [1.0] * 30 + [-2.0] * 50
         self.assertEqual(oscillation_diagnostics(five_changes)["sign_changes"], 5)
         self.assertTrue(oscillation_diagnostics(five_changes)["persistent"])
+
+    def test_dalu_replication_classification_uses_three_seeds(self) -> None:
+        decision = classify_screen(
+            _dalu_runs(),
+            circuit="dalu",
+            seeds=DALU_REPLICATION_SEEDS,
+            success_decision="dalu_replication_has_eligible_cells",
+            failure_decision="dalu_replication_no_eligible_cells",
+        )
+        self.assertEqual(decision["decision"], "dalu_replication_has_eligible_cells")
+        self.assertEqual(len(decision["candidates"]), 2)
+        decisive = [row for row in decision["health_gates"] if row["decisive"]]
+        self.assertEqual(len(decisive), 2 * 4 * 3 * 2)
+
+    def test_cross_circuit_rows_are_paired_only_on_screen_seeds(self) -> None:
+        rows = _cross_circuit_rows(_screen_runs(), _dalu_runs())
+        self.assertEqual(len(rows), 2 * 4 * 2 * 3 * 2)
+        self.assertEqual({row["seed"] for row in rows}, set(SCREEN_SEEDS))
+        self.assertTrue(all(row["dalu_minus_bc0_absolute_gap"] == 0.0 for row in rows))
+
+    def test_dalu_replication_report_rejects_an_incomplete_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            args = SimpleNamespace(
+                bc0_runs_root=root / "bc0",
+                dalu_runs_root=root / "dalu",
+                output_dir=root / "report",
+            )
+            self.assertEqual(dalu_replication_report(args), 2)
 
 
 class ConfirmationDecisionTest(unittest.TestCase):
