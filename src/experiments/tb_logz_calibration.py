@@ -80,9 +80,13 @@ def _resolved_configuration(args: argparse.Namespace, cfg: Any, circuit_path: Pa
         configured_batch_size = _tb_value(cfg, "trajectories_per_episode", 4)
     actions_raw = OmegaConf.select(cfg, "available_actions")
     actions = None if actions_raw is None else [int(action) for action in actions_raw]
+    experiment = str(getattr(args, "experiment_name", "calibrated_log_z_initialization"))
+    configured_optimizer_updates = int(cfg.episodes)
+    if experiment == "trajectory_budget_selection":
+        configured_optimizer_updates = int(args.max_trajectories) // int(configured_batch_size)
     values = {
         "schema_version": int(getattr(args, "run_schema_version", RUN_SCHEMA_VERSION)),
-        "experiment": str(getattr(args, "experiment_name", "calibrated_log_z_initialization")),
+        "experiment": experiment,
         "variant": str(args.variant).lower(),
         "config_name": args.config_name,
         "circuit": circuit_path.stem,
@@ -92,7 +96,7 @@ def _resolved_configuration(args: argparse.Namespace, cfg: Any, circuit_path: Pa
         "device": str(args.device),
         "max_trajectories": int(args.max_trajectories),
         "schedule_trajectories": int(args.schedule_trajectories),
-        "configured_optimizer_updates": int(cfg.episodes),
+        "configured_optimizer_updates": configured_optimizer_updates,
         "milestones": [int(value) for value in args.milestones],
         "num_steps": int(cfg.num_steps),
         "available_actions": actions,
@@ -130,6 +134,11 @@ def _resolved_configuration(args: argparse.Namespace, cfg: Any, circuit_path: Pa
         "search_trajectories", "search_budgets",
     )
     scientific = {key: values[key] for key in scientific_keys}
+    if experiment == "trajectory_budget_selection":
+        scientific.update({
+            "max_trajectories": values["max_trajectories"],
+            "milestones": values["milestones"],
+        })
     paired = {key: value for key, value in scientific.items() if key != "variant"}
     values["scientific_configuration"] = scientific
     values["scientific_configuration_fingerprint"] = canonical_sha256(scientific)
@@ -151,6 +160,8 @@ def _validate_configuration(resolved: Mapping[str, Any]) -> None:
         if rate not in EXPERIMENT_4_RATES:
             raise ValueError(f"Experiment 4 logZ rate must be one of {EXPERIMENT_4_RATES}, got {rate}")
         expected_rate = rate
+    elif experiment == "trajectory_budget_selection":
+        expected_rate = 0.01
     required = {
         "variant": resolved["variant"],
         "num_steps": 20,
@@ -164,12 +175,17 @@ def _validate_configuration(resolved: Mapping[str, Any]) -> None:
         "exploration_epsilon_start": 0.5,
         "exploration_epsilon_end": 0.01,
         "exploration_warmup_updates": 20,
-        "configured_optimizer_updates": 200,
+        "configured_optimizer_updates": (
+            int(resolved["max_trajectories"]) // int(resolved["trajectories_per_update"])
+            if experiment == "trajectory_budget_selection" else 200
+        ),
         "calibration_trajectories": 64,
         "calibration_epsilon": 0.5,
     }
     if resolved["variant"] not in EXPECTED_VARIANTS:
         raise ValueError(f"variant must be one of {EXPECTED_VARIANTS}")
+    if experiment == "trajectory_budget_selection" and resolved["variant"] != "zcal":
+        raise ValueError("Experiment 5 requires calibrated logZ initialization (zcal)")
     failures = {
         key: {"expected": expected, "actual": resolved.get(key)}
         for key, expected in required.items() if resolved.get(key) != expected
@@ -302,7 +318,7 @@ def run_experiment(args: argparse.Namespace) -> int:
     batch_size = int(resolved["trajectories_per_update"])
     if args.max_trajectories < CALIBRATION_TRAJECTORIES or args.max_trajectories % batch_size:
         raise ValueError("--max-trajectories must be at least 64 and divisible by four")
-    if args.max_trajectories > args.schedule_trajectories:
+    if args.max_trajectories > args.schedule_trajectories and resolved["experiment"] != "trajectory_budget_selection":
         raise ValueError("max trajectories cannot exceed the epsilon schedule budget")
     milestones = sorted(set(int(value) for value in args.milestones))
     if not milestones or milestones[-1] > args.max_trajectories or any(value < 64 or value % 4 for value in milestones):

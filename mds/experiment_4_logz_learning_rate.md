@@ -402,3 +402,324 @@ health, oscillation, ranking, simplicity, best-of-N and phase-ledger CSVs,
 three `dalu` plots, and `cross_circuit_paired_metrics.csv`. Any cells described
 as eligible in this report are descriptive results only; they do not
 retroactively satisfy the original `bc0` confirmation gate.
+
+### `dalu` execution and artifact validity
+
+The forced replication completed all 24 planned `dalu` runs: two
+initializations, four constant `logZ` learning rates, and seeds 0--2. All 24
+run summaries are complete and report no numerical failure. Each run has the
+required 800 training trajectories, 200 optimizer updates, 64 cached
+calibration trajectories, 64 calibration presentations, and 736 new
+on-policy trajectories. The per-run artifact validator also accepted the
+milestone files, trajectory-source counts, checkpoints, fixed-validation
+cache, calibration cache, and ordered calibration minibatches before the
+aggregate pairing check was reached.
+
+The `dalu` runs use code commit
+`da22485780625267772b49f7f24093cd943bba88` and source-tree hash
+`ef590bb8bd06eb6c27de4ba2d68b0f061a7f75a6f73f12cca7f7db2c7fb32510`.
+The corresponding `bc0` screen uses commit
+`e81649f752e93ae8cbb36bb2ad36213ea830b473` and source-tree hash
+`b7af20532f71811dbe97f240773f5e49a69923cfeebc9b10811baa4239b04ded`.
+This source-provenance difference was expected and allowed by the replication
+design after scientific-configuration validation.
+
+Several SLURM tasks had to be retried because an allocated GPU shard was busy
+or not visible at CUDA initialization. These failures occurred before
+training. The completed artifacts have the required counters and contain no
+numerical failure, so the infrastructure retries do not change the scientific
+sample.
+
+The CPU aggregate was job `17790`. It used 2.95 GiB peak RSS and exited with
+code 1 after 1 minute 41 seconds. Its authoritative decision is:
+
+```json
+{
+  "complete": false,
+  "failure_type": "artifact_or_execution_failure",
+  "message": "dalu post-initialization pairing mismatch for zcal, seed 1"
+}
+```
+
+This is an exact reproducibility failure in one run, not a missing or
+incomplete training result. For `zcal`, seed 1, rates `0.003`, `0.01`, and
+`0.03` all assigned the calibration target `39.36384963989258` and have the
+same post-initialization checksum. Rate `0.1` assigned
+`39.36384582519531`, a difference of about `3.8e-6`, and therefore has a
+different bitwise checksum. The pre-calibration policy checksum and ordered
+calibration-sequence checksum are identical across all four rates. The cached
+policy log-probabilities differ at floating-point roundoff scale, apparently
+because the calibration evaluation was not bitwise deterministic across GPU
+shards.
+
+The strict check behaved correctly: the official report must not claim a
+paired factorial result when exact pairing is absent. The descriptive tables
+below are reconstructed directly from the immutable, individually valid run
+summaries and update streams. They are sufficient to assess the large
+training effects, but they are not a substitute for a successful official
+aggregate. In particular, the `zcal`, rate-`0.1`, seed-1 comparison should be
+treated as approximately rather than exactly paired.
+
+## Dalu circuit results
+
+The following values are means over seeds 0--2. `F/U pass` is the number of
+seeds passing every health gate on the fixed-uniform and fresh-on-policy
+strata, respectively. Counts are out of three. As in the original screen,
+only the 800-trajectory rows are decisive.
+
+### Dalu `z0` checkpoint table
+
+| initialization | rate | trajectories | fixed gap | fixed bias | fresh gap | fresh bias | learned `logZ` | archive HV | F/U pass |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|:---:|
+| `z0` | 0.003 | 200 | 39.629025 | 0.999310 | 38.650311 | 0.999403 | 0.149557 | 0.028356 | 0/3 / 0/3 |
+| `z0` | 0.003 | 400 | 39.662939 | 0.999064 | 38.278722 | 0.998994 | 0.298659 | 0.035560 | 0/3 / 0/3 |
+| `z0` | 0.003 | 800 | 39.944182 | 0.998314 | 37.247344 | 0.997755 | 0.594858 | 0.040290 | 0/3 / 0/3 |
+| `z0` | 0.01 | 200 | 39.282015 | 0.999296 | 38.301335 | 0.999391 | 0.497982 | 0.028356 | 0/3 / 0/3 |
+| `z0` | 0.01 | 400 | 38.965989 | 0.999032 | 37.586333 | 0.998950 | 0.992452 | 0.035560 | 0/3 / 0/3 |
+| `z0` | 0.01 | 800 | 38.497039 | 0.998291 | 35.977199 | 0.997786 | 1.968086 | 0.040485 | 0/3 / 0/3 |
+| `z0` | 0.03 | 200 | 38.297131 | 0.999250 | 37.304174 | 0.999351 | 1.489231 | 0.028356 | 0/3 / 0/3 |
+| `z0` | 0.03 | 400 | 36.984039 | 0.998969 | 35.629713 | 0.998877 | 2.950421 | 0.035567 | 0/3 / 0/3 |
+| `z0` | 0.03 | 800 | 34.612243 | 0.997971 | 32.224291 | 0.997492 | 5.773367 | 0.040464 | 0/3 / 0/3 |
+| `z0` | 0.1 | 200 | 34.887298 | 0.999079 | 33.874350 | 0.999218 | 4.906503 | 0.028356 | 0/3 / 0/3 |
+| `z0` | 0.1 | 400 | 30.434962 | 0.998479 | 29.114852 | 0.998303 | 9.500083 | 0.035560 | 0/3 / 0/3 |
+| `z0` | 0.1 | 800 | 22.595200 | 0.996224 | 20.759305 | 0.995679 | 17.562441 | 0.040339 | 0/3 / 0/3 |
+
+### Dalu `zcal` checkpoint table
+
+| initialization | rate | trajectories | fixed gap | fixed bias | fresh gap | fresh bias | learned `logZ` | archive HV | F/U pass |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|:---:|
+| `zcal` | 0.003 | 200 | 0.095698 | 0.065564 | 0.100647 | 0.065403 | 39.269733 | 0.030676 | 2/3 / 2/3 |
+| `zcal` | 0.003 | 400 | 0.099412 | 0.076462 | 0.064368 | 0.053047 | 39.267944 | 0.037678 | 1/3 / 2/3 |
+| `zcal` | 0.003 | 800 | 0.075975 | 0.041319 | 0.064231 | 0.031170 | 39.269981 | 0.040270 | 2/3 / 2/3 |
+| `zcal` | 0.01 | 200 | 0.056972 | 0.027095 | 0.086894 | 0.050310 | 39.301076 | 0.030676 | 3/3 / 2/3 |
+| `zcal` | 0.01 | 400 | 0.079869 | 0.044852 | 0.040123 | 0.023686 | 39.277121 | 0.037678 | 2/3 / 2/3 |
+| `zcal` | 0.01 | 800 | 0.066698 | 0.036223 | 0.047209 | 0.017653 | 39.269758 | 0.040270 | 2/3 / 3/3 |
+| `zcal` | 0.03 | 200 | 0.068764 | 0.043269 | 0.074574 | 0.032696 | 39.284804 | 0.030676 | 2/3 / 2/3 |
+| `zcal` | 0.03 | 400 | 0.064279 | 0.034815 | 0.056055 | 0.033082 | 39.284501 | 0.037692 | 2/3 / 2/3 |
+| `zcal` | 0.03 | 800 | 0.056287 | 0.039019 | 0.079359 | 0.043525 | 39.286261 | 0.040283 | 2/3 / 2/3 |
+| `zcal` | 0.1 | 200 | 0.167113 | 0.136812 | 0.044348 | 0.013192 | 39.200462 | 0.028488 | 0/3 / 3/3 |
+| `zcal` | 0.1 | 400 | 0.049264 | 0.019308 | 0.090330 | 0.051099 | 39.320684 | 0.037699 | 3/3 / 1/3 |
+| `zcal` | 0.1 | 800 | 0.041347 | 0.011595 | 0.099686 | 0.081044 | 39.355451 | 0.040290 | 3/3 / 1/3 |
+
+The `z0` rate ordering is monotonic and almost identical to `bc0`: increasing
+the rate moves the scalar farther in the available 200 updates. It still does
+not move nearly far enough. At rate `0.1`, the mean learned value is only
+`17.56`, while the seed-specific calibrated targets are approximately
+`39.05`--`39.36`. The final fixed and fresh gaps remain `22.60` and `20.76`,
+and more than 99.5% of TB MSE remains explained by global-offset bias. Every
+`z0` seed fails target-gap, bias-fraction, and standardized-bias gates in both
+strata at every checkpoint.
+
+Calibration again fixes the scale immediately. All final `zcal` mean target
+gaps are below `0.10`, and all mean bias fractions are below `0.082`.
+Nevertheless, no `zcal` cell passes every seed/stratum gate at trajectory 800.
+Mean values hide isolated but decisive failures. The next table is the
+dedicated Dalu `zcal` seed-level endpoint table:
+
+| rate | seed | fixed gap | fixed bias | fixed standardized bias | fresh gap | fresh bias | fresh standardized bias | learned `logZ` | archive HV |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0.003 | 0 | 0.067714 | 0.015019 | 0.123482 | 0.049818 | 0.008374 | 0.091897 | 39.289948 | 0.035886 |
+| 0.003 | 1 | 0.055603 | 0.016093 | 0.127890 | 0.108624 | 0.075807 | **0.286401** | 39.306656 | 0.042659 |
+| 0.003 | 2 | 0.104607 | **0.092846** | **0.319921** | 0.034250 | 0.009328 | 0.097036 | 39.213341 | 0.042263 |
+| 0.01 | 0 | 0.038195 | 0.005579 | 0.074905 | 0.042793 | 0.007653 | 0.087818 | 39.304916 | 0.035886 |
+| 0.01 | 1 | 0.079544 | 0.037413 | 0.197147 | 0.069358 | 0.036576 | 0.194846 | 39.274937 | 0.042659 |
+| 0.01 | 2 | 0.082354 | **0.065677** | **0.265129** | 0.029477 | 0.008729 | 0.093837 | 39.229420 | 0.042263 |
+| 0.03 | 0 | 0.006766 | 0.000206 | 0.014343 | 0.062633 | 0.018247 | 0.136332 | 39.327526 | 0.035886 |
+| 0.03 | 1 | 0.056631 | 0.015272 | 0.124536 | 0.125060 | **0.089864** | **0.314224** | 39.315166 | 0.042701 |
+| 0.03 | 2 | 0.105463 | **0.101579** | **0.336250** | 0.050386 | 0.022463 | 0.151590 | 39.216091 | 0.042263 |
+| 0.1 | 0 | 0.053429 | 0.012842 | 0.114056 | 0.114606 | **0.061817** | **0.256691** | 39.390793 | 0.035928 |
+| 0.1 | 1 | 0.043789 | 0.014278 | 0.120351 | 0.150060 | **0.169941** | **0.452475** | 39.380280 | 0.042680 |
+| 0.1 | 2 | 0.026824 | 0.007664 | 0.087883 | 0.034393 | 0.011374 | 0.107259 | 39.295280 | 0.042263 |
+
+Bold values exceed the applicable bias-fraction limit of `0.05` or
+standardized-bias limit of `0.25`. All target gaps remain below the `0.5`
+limit. Rate `0.01` is closest to endpoint health, failing only the fixed
+stratum for seed 2. Rate `0.1` passes all fixed-stratum checks but fails the
+fresh stratum for seeds 0 and 1. This reversal is evidence of distribution
+sensitivity rather than a clean rate effect.
+
+### Dalu oscillation table
+
+The persistent-oscillation rule is unchanged: more than four sign changes in
+200 updates and a larger mean absolute gap in updates 151--200 than in
+101--150. The table gives `sign changes; preceding window -> final window`.
+
+| initialization | rate | seed 0 | seed 1 | seed 2 | cell oscillation pass |
+|:---|---:|:---|:---|:---|:---:|
+| `z0` | 0.003 | 0; 38.4948 -> 38.3708 | 0; 38.6090 -> 37.3405 | 0; 38.2435 -> 38.2796 | yes |
+| `z0` | 0.01 | 0; 37.6338 -> 37.1910 | 0; 37.7305 -> 36.1202 | 0; 37.4333 -> 37.0910 | yes |
+| `z0` | 0.03 | 0; 35.2303 -> 33.9177 | 0; 35.3222 -> 32.7308 | 0; 35.0072 -> 33.7796 | yes |
+| `z0` | 0.1 | 0; 27.3508 -> 23.3716 | 0; 27.4611 -> 22.4566 | 0; 27.0744 -> 23.1866 | yes |
+| `zcal` | 0.003 | 92; 0.1761 -> 0.1597 | 92; 0.1424 -> 0.1320 | **87; 0.1112 -> 0.1471** | **no** |
+| `zcal` | 0.01 | 98; 0.1655 -> 0.1488 | **96; 0.1421 -> 0.1467** | **101; 0.1051 -> 0.1577** | **no** |
+| `zcal` | 0.03 | **92; 0.1545 -> 0.1686** | 94; 0.1464 -> 0.1449 | **101; 0.1002 -> 0.1637** | **no** |
+| `zcal` | 0.1 | 86; 0.1810 -> 0.1707 | 98; 0.1424 -> 0.1310 | **97; 0.1120 -> 0.1664** | **no** |
+
+All `zcal` cells cross the target 86--101 times per seed. Each rate has at
+least one seed whose final window worsens, so every calibrated cell fails the
+persistent-oscillation criterion. Seed 2 is persistent at all four rates and
+is the main reason that the three-seed replication is more clearly negative
+than the two-seed `bc0` screen. Lowering the rate to `0.003` reduces neither
+the number of crossings nor the cross-seed fragility.
+
+### Dalu final cell-selection table
+
+The endpoint cell metrics average both validation strata and all three
+`dalu` seeds. The relative-bias ratio uses the median fixed-uniform bias and
+the same-initialization rate-`0.01` denominator.
+
+| initialization | rate | mean absolute gap | mean bias | median fixed bias | ratio to `0.01` | mean archive HV | final health | oscillation | eligible |
+|:---|---:|---:|---:|---:|---:|---:|:---:|:---:|:---:|
+| `z0` | 0.003 | 38.595763 | 0.998035 | 0.998206 | 1.000015 | 0.040290 | fail | pass | no |
+| `z0` | 0.01 | 37.237119 | 0.998039 | 0.998192 | 1.000000 | 0.040485 | fail | pass | no |
+| `z0` | 0.03 | 33.418267 | 0.997731 | 0.998175 | 0.999983 | 0.040464 | fail | pass | no |
+| `z0` | 0.1 | 21.677253 | 0.995952 | 0.996272 | 0.998076 | 0.040339 | fail | pass | no |
+| `zcal` | 0.003 | 0.070103 | 0.036245 | 0.016093 | 0.430138 | 0.040270 | fail | fail | no |
+| `zcal` | 0.01 | **0.056954** | **0.026938** | 0.037413 | 1.000000 | 0.040270 | fail | fail | no |
+| `zcal` | 0.03 | 0.067823 | 0.041272 | 0.015272 | 0.408211 | 0.040283 | fail | fail | no |
+| `zcal` | 0.1 | 0.070517 | 0.046319 | **0.012842** | 0.343245 | 0.040290 | fail | fail | no |
+
+All cells pass the 1.1 relative-bias rule. That does not make any cell
+eligible: every `z0` cell fails absolute health, and every `zcal` cell fails
+both absolute health and persistent oscillation. Consequently, the formal
+one-standard-error preference and candidate ranking cannot be invoked.
+
+If an unhealthy configuration must be named for descriptive comparison,
+`zcal` with rate `0.01` is the least-bad choice: it has the smallest overall
+mean final target gap and the smallest overall mean final bias, and only one
+of its six endpoint seed/stratum gates fails. It is not a production-ready
+winner. Seeds 1 and 2 are persistently oscillatory, and seed 2 exceeds both
+fixed-uniform bias thresholds. Rate `0.003` has fewer persistent seeds but
+more endpoint health failures; rate `0.1` has better fixed-uniform values but
+substantially worse fresh-on-policy bias. There is no defensible constant-rate
+setup that satisfies the experiment's rules.
+
+## Paired `bc0` versus Dalu comparison
+
+The paired seed-0/1 endpoint comparison answers the motivating replication
+question. Deltas are `dalu - bc0`; lower gaps are better. Hypervolume values
+are on circuit-specific objective distributions, so their absolute
+cross-circuit difference should not be interpreted as one circuit training
+better than the other.
+
+| initialization | rate | `bc0` fixed gap | `dalu` fixed gap | delta | `bc0` fresh gap | `dalu` fresh gap | delta | `bc0` HV | `dalu` HV |
+|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `z0` | 0.003 | 42.70979 | 40.25924 | -2.45055 | 38.93160 | 36.95124 | -1.98037 | 0.244134 | 0.039033 |
+| `z0` | 0.01 | 41.32239 | 38.86460 | -2.45778 | 37.54477 | 35.60995 | -1.93483 | 0.244134 | 0.039325 |
+| `z0` | 0.03 | 37.45511 | 34.88096 | -2.57414 | 33.77631 | 32.00488 | -1.77143 | 0.244002 | 0.039294 |
+| `z0` | 0.1 | 25.24998 | 22.78561 | -2.46437 | 22.22160 | 20.54859 | -1.67301 | 0.243881 | 0.039106 |
+| `zcal` | 0.003 | 0.00536 | 0.06166 | +0.05630 | 0.01198 | 0.07922 | +0.06724 | 0.243698 | 0.039273 |
+| `zcal` | 0.01 | 0.01040 | 0.05887 | +0.04847 | 0.01199 | 0.05608 | +0.04408 | 0.243526 | 0.039273 |
+| `zcal` | 0.03 | 0.02455 | 0.03170 | +0.00714 | 0.02084 | 0.09385 | +0.07301 | 0.243526 | 0.039294 |
+| `zcal` | 0.1 | 0.01461 | 0.04861 | +0.03400 | 0.00778 | 0.13233 | +0.12455 | 0.243617 | 0.039304 |
+
+The approximately two-unit reduction in the `z0` gap on `dalu` is explained
+by its smaller normalization target: the `bc0` seed targets are about
+`41.56`--`41.69`, while the `dalu` targets are about `39.05`--`39.36`.
+Learning dynamics are not repaired; `z0` still advances at roughly the same
+rate and remains tens of log units away after 200 updates.
+
+For `zcal`, `dalu` is generally harder at the endpoint. Its paired gaps are
+larger than `bc0` for every rate and both validation strata at trajectory 800.
+The increase is especially pronounced for fresh-on-policy evaluation at rate
+`0.1` (`+0.12455`). The earlier checkpoints sometimes favor `dalu`, but the
+advantage does not persist: by trajectory 800, seed sensitivity and
+oscillation dominate. Thus the original pathology is not specific to `bc0`.
+If anything, the three-seed `dalu` replication exposes it more clearly.
+
+Within `dalu`, final archive hypervolume spans only `0.040270`--`0.040485`
+across all eight cells, about 0.54% of the lower value. Within `zcal` alone,
+the spread is about 0.05%. There is no material search-quality gain from
+choosing a different constant `logZ` rate, and hypervolume cannot override
+failed TB health.
+
+## Overall conclusion and recommended setup
+
+The combined evidence supports the following conclusions:
+
+1. **No tested constant `logZ` learning rate is acceptable under the
+   prespecified rules.** The original `bc0` screen has zero eligible cells,
+   and the forced `dalu` replication also has zero descriptively eligible
+   cells. There is therefore no healthy setup to promote.
+
+2. **Initialization matters much more than the constant rate.** `z0` is
+   unusably slow over 800 trajectories even at rate `0.1`; `zcal` immediately
+   reaches the correct scale. Any practical setup should retain calibration
+   or an equivalent normalization estimate.
+
+3. **Among the tested options, `zcal` with rate `0.01` is the best descriptive
+   baseline, not a validated winner.** It minimizes the `dalu` mean endpoint
+   gap and mean bias and was also the prespecified control. Its major problems
+   are persistent oscillation in two of three `dalu` seeds, a decisive fixed
+   bias failure in seed 2, and no measurable search-quality advantage.
+
+4. **The failure is not caused simply by too large a rate.** Rate `0.003`
+   still crosses the target roughly 90 times per seed and is persistently
+   oscillatory in seed 2. Raising the rate changes which validation stratum or
+   seed fails but does not produce robust health.
+
+5. **The behavior is circuit-general over the two tested circuits.** The
+   absolute target changes between `bc0` and `dalu`, but the qualitative
+   `z0` under-normalization and `zcal` oscillation remain. The replication
+   rejects the hypothesis that the `bc0` result was merely circuit-specific.
+
+6. **There is a reproducibility issue in addition to the scientific issue.**
+   GPU evaluation produced a `3.8e-6` calibration-target discrepancy in one
+   otherwise paired run. Before another factorial study, calibration should be
+   made bitwise reproducible or the protocol should define a justified
+   tolerance plus a checksum over rate-independent inputs. The current exact
+   check should not be weakened silently.
+
+For subsequent work, use `zcal` and rate `0.01` only as the control condition.
+The next experiment should change the time dynamics rather than test another
+nearby constant rate: freeze `logZ` after calibration, use a decay schedule,
+apply damping or an exponential moving average, or unfreeze only after a
+controlled warm-up. Any candidate must be evaluated on both fixed-uniform and
+fresh-on-policy strata, retain the longitudinal oscillation gate, and use at
+least three seeds. Until such a mechanism passes those checks, Experiment 4
+does not justify changing the production `logZ` optimizer setup.
+
+## Best configuration across `bc0` and `dalu`
+
+No tested configuration is a healthy winner under the prespecified Experiment
+4 rules. Every `z0` cell fails the absolute TB-health gates, while every
+`zcal` cell is persistently oscillatory in at least one seed. Therefore the
+experiment does not authorize promoting any constant `logZ` learning rate as
+a validated production setting.
+
+If one of the tested configurations must be used as the cross-circuit
+baseline, the best practical choice is:
+
+- initialization: `zcal`;
+- `logZ` learning rate: `0.01`;
+- policy learning rate: `0.001`.
+
+This is the least-bad baseline rather than a successful experimental winner.
+It passes every `bc0` endpoint health gate and, on `dalu`, has the smallest
+overall mean final absolute target gap (`0.056954`) and mean bias fraction
+(`0.026938`). Five of its six `dalu` seed/validation-stratum endpoint gates
+pass, which is the closest any calibrated rate comes to complete endpoint
+health. Archive hypervolume is essentially insensitive to the tested `logZ`
+rates, so there is no search-quality reason to choose a different rate.
+
+The recommendation has important limitations. Rate `0.01` is persistently
+oscillatory in both `bc0` seeds and in two of three `dalu` seeds. On `dalu`,
+seed 2 also fails the final fixed-uniform bias gates: its bias fraction is
+`0.065677`, above the `0.05` limit, and its standardized bias is `0.265129`,
+above the `0.25` limit. It consequently remains unsuitable as a validated
+production configuration.
+
+Rate `0.003` is the closest alternative because it has fewer persistent seeds
+across the two circuits and excellent `bc0` endpoint values. It is not a
+better general choice: on `dalu` it has a larger mean endpoint gap and bias
+than rate `0.01` and passes only four of six endpoint seed/stratum gates.
+Rates `0.03` and `0.1` are still less attractive because they fail the `bc0`
+relative-bias safeguard and introduce additional `dalu` health or
+fresh-on-policy bias problems.
+
+Accordingly, future experiments should retain `zcal` with rate `0.01` as the
+control but test a non-constant optimization mechanism, such as freezing
+`logZ` after calibration, controlled unfreezing, learning-rate decay, or
+damping. Until one of those mechanisms passes both validation strata and the
+longitudinal oscillation gate, there is no production-ready `logZ` setup from
+Experiment 4.
