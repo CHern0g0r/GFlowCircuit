@@ -248,6 +248,52 @@ eligible checkpoint with a completed `2B` confirmation. The largest completed
 checkpoint can never be selected without its successor. In that case extend
 the cap or run Experiment 6, then repeat the entire budget curve.
 
+## Experiment 5.5: batch-size influence
+
+### Hypothesis
+
+At a fixed, moderate trajectory budget, batch size changes the quality of the
+learned policy, and at least one batch size improves policy quality or search
+quality relative to the current batch size of four.
+
+### Setup
+
+Using the selected `logZ` settings and no replay, compare batch sizes
+`[1, 4, 8, 16, 32]` on `bc0` and `dalu`, seeds 0--4. Here batch size is the
+number of newly collected trajectories used in one optimizer update. Give
+every run exactly 1,600 complete training trajectories, so the variants receive
+the same environment-data budget but respectively perform 1,600, 400, 200,
+100, and 50 optimizer updates. Do not compensate for a larger batch with extra
+epochs or trajectory presentations.
+
+Pair variants by seed, initial parameter checksum, and training-trajectory RNG
+stream. Keep the model, reward, learning rates, epsilon schedule, optimizer,
+and all other settings fixed. Evaluate at 200, 400, 800, and 1,600 trajectories
+using the shared cached validation sets and search protocol. Record optimizer
+updates, trajectory presentations, wall time, and peak memory in addition to
+the shared metrics.
+
+Treat fixed-uniform analytically centered residual RMS at 1,600 trajectories as
+the primary policy-quality metric. Use fresh-on-policy centered RMS and the
+health gates as confirmation metrics. Treat mean per-seed archive hypervolume
+as the primary search-quality metric, with best-of-`N` area under the curve as
+the secondary search metric.
+
+### Evaluation and rejection rule
+
+Reject any batch size that violates a common full-horizon health gate on either
+circuit. Relative to batch size four, accept a batch size as an improvement
+only if its paired 95% bootstrap interval shows at least a 5% reduction in
+fixed-uniform centered RMS or an increase of at least 0.005 in mean archive
+hypervolume, without worsening the other primary metric by more than 5% or
+0.005, respectively. If several batch sizes qualify, select the smallest one
+within one standard error of the best hypervolume, breaking a remaining tie by
+lower centered RMS and then lower wall time.
+
+Reject the batch-size-influence hypothesis if no alternative qualifies. In
+that case retain batch size four. Any selected change invalidates the existing
+`B*`; repeat Experiment 5 with the new batch size before proceeding.
+
 ## Experiment 6: uniform trajectory replay
 
 ### Hypothesis
