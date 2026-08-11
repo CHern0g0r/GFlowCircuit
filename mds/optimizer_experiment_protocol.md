@@ -258,18 +258,20 @@ quality relative to the current batch size of four.
 
 ### Setup
 
-Using the selected `logZ` settings and no replay, compare batch sizes
-`[1, 4, 8, 16, 32]` on `bc0` and `dalu`, seeds 0--4. Here batch size is the
-number of newly collected trajectories used in one optimizer update. Give
-every run exactly 1,600 complete training trajectories, so the variants receive
-the same environment-data budget but respectively perform 1,600, 400, 200,
-100, and 50 optimizer updates. Do not compensate for a larger batch with extra
-epochs or trajectory presentations.
+Using the Experiment 5 descriptive control (`zcal`, `logZ` learning rate
+`0.01`) and no replay, compare batch sizes `[1, 4, 8, 16, 32]` on `bc0` and
+`dalu`, seeds 0--4. This control was not selected as a healthy optimizer by
+Experiment 5. Here batch size is the number of newly collected trajectories
+used in one optimizer update. Give every run exactly 1,600 complete training
+trajectories, so the variants receive the same environment-data budget but
+respectively perform 1,600, 400, 200, 100, and 50 optimizer updates. Do not
+compensate for a larger batch with extra epochs or trajectory presentations.
 
 Pair variants by seed, initial parameter checksum, and training-trajectory RNG
 stream. Keep the model, reward, learning rates, epsilon schedule, optimizer,
-and all other settings fixed. Evaluate at 200, 400, 800, and 1,600 trajectories
-using the shared cached validation sets and search protocol. Record optimizer
+and all other settings fixed. Evaluate at 256, 512, 1,024, and 1,600
+trajectories; these checkpoints are divisible by every candidate batch size.
+Use the shared cached validation sets and search protocol. Record optimizer
 updates, trajectory presentations, wall time, and peak memory in addition to
 the shared metrics.
 

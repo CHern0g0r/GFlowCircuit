@@ -7,7 +7,7 @@ import pyspiel
 import torch
 from torch.distributions import Categorical
 
-from src.algorithms.gflownet_tb.behavior import epsilon_mixed_probs
+from src.algorithms.gflownet_tb.behavior import EpsilonInput, epsilon_mixed_probs
 from src.algorithms.gflownet_tb.policy import TBGFlowNetPolicy
 from src.algorithms.gflownet_tb.reward import transform_terminal_reward
 from src.algorithms.gflownet_tb.types import TBStep, TBTrajectory
@@ -41,7 +41,7 @@ def sample_tb_trajectory(
     reward_improvement_clip: float,
     sample_actions: bool,
     available_actions: list[int] | None = None,
-    epsilon_uniform: float = 0.0,
+    epsilon_uniform: EpsilonInput = 0.0,
     action_generator: torch.Generator | None = None,
 ) -> TBTrajectory:
     return sample_tb_trajectories(
@@ -169,7 +169,7 @@ def sample_tb_trajectories(
     reward_improvement_clip: float,
     sample_actions: bool,
     available_actions: list[int] | None = None,
-    epsilon_uniform: float = 0.0,
+    epsilon_uniform: EpsilonInput = 0.0,
     action_generator: torch.Generator | None = None,
 ) -> list[TBTrajectory]:
     rollouts = [
@@ -182,6 +182,18 @@ def sample_tb_trajectories(
         )
         for file_path in file_paths
     ]
+    per_rollout_epsilon: torch.Tensor | None = None
+    if not isinstance(epsilon_uniform, (int, float)):
+        per_rollout_epsilon = torch.as_tensor(
+            epsilon_uniform,
+            dtype=torch.float32,
+            device=policy.log_z.device,
+        )
+        if per_rollout_epsilon.ndim != 1 or int(per_rollout_epsilon.numel()) != len(rollouts):
+            raise ValueError(
+                "epsilon_uniform must be scalar or contain one value per rollout; "
+                f"got shape {tuple(per_rollout_epsilon.shape)} for {len(rollouts)} rollouts"
+            )
 
     while True:
         active_indices: list[int] = []
@@ -216,7 +228,10 @@ def sample_tb_trajectories(
         logits = policy(obs_batch)
         probs = policy.masked_probs(logits, legal_rows)
         if sample_actions:
-            behavior_probs = epsilon_mixed_probs(probs, legal_rows, epsilon_uniform)
+            active_epsilon: EpsilonInput = epsilon_uniform
+            if per_rollout_epsilon is not None:
+                active_epsilon = per_rollout_epsilon[active_indices]
+            behavior_probs = epsilon_mixed_probs(probs, legal_rows, active_epsilon)
             actions = _sample_behavior_actions(behavior_probs, action_generator)
         else:
             actions = probs.argmax(dim=-1)

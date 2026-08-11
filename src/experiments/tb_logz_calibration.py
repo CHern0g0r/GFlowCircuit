@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import resource
 import sys
 import time
 import traceback
@@ -62,6 +63,8 @@ CALIBRATION_TRAJECTORIES = 64
 CALIBRATION_EPSILON = 0.5
 EXPECTED_VARIANTS = ("z0", "zcal")
 EXPERIMENT_4_RATES = (0.003, 0.01, 0.03, 0.1)
+BATCH_SIZE_INFLUENCE_BATCHES = (1, 4, 8, 16, 32)
+BATCH_SIZE_SCHEDULE_UNIT = 4
 
 
 def _resolved_configuration(args: argparse.Namespace, cfg: Any, circuit_path: Path) -> dict[str, Any]:
@@ -82,8 +85,9 @@ def _resolved_configuration(args: argparse.Namespace, cfg: Any, circuit_path: Pa
     actions = None if actions_raw is None else [int(action) for action in actions_raw]
     experiment = str(getattr(args, "experiment_name", "calibrated_log_z_initialization"))
     configured_optimizer_updates = int(cfg.episodes)
-    if experiment == "trajectory_budget_selection":
+    if experiment in {"trajectory_budget_selection", "batch_size_influence"}:
         configured_optimizer_updates = int(args.max_trajectories) // int(configured_batch_size)
+    trajectory_indexed_epsilon = experiment == "batch_size_influence"
     values = {
         "schema_version": int(getattr(args, "run_schema_version", RUN_SCHEMA_VERSION)),
         "experiment": experiment,
@@ -112,6 +116,12 @@ def _resolved_configuration(args: argparse.Namespace, cfg: Any, circuit_path: Pa
         "exploration_epsilon_end": float(_tb_value(cfg, "exploration_epsilon_end", 0.01)),
         "exploration_warmup_updates": int(_tb_value(cfg, "exploration_warmup_episodes", 20)),
         "exploration_decay_updates": _tb_value(cfg, "exploration_decay_episodes", None, preserve_none=True),
+        "epsilon_schedule_indexing": (
+            "canonical_trajectory_groups" if trajectory_indexed_epsilon else "optimizer_updates"
+        ),
+        "epsilon_schedule_unit_trajectories": (
+            BATCH_SIZE_SCHEDULE_UNIT if trajectory_indexed_epsilon else int(configured_batch_size)
+        ),
         "calibration_trajectories": CALIBRATION_TRAJECTORIES,
         "calibration_epsilon": CALIBRATION_EPSILON,
         "calibration_batch_order": "collection_order",
@@ -134,7 +144,12 @@ def _resolved_configuration(args: argparse.Namespace, cfg: Any, circuit_path: Pa
         "search_trajectories", "search_budgets",
     )
     scientific = {key: values[key] for key in scientific_keys}
-    if experiment == "trajectory_budget_selection":
+    if experiment == "batch_size_influence":
+        scientific.update({
+            "epsilon_schedule_indexing": values["epsilon_schedule_indexing"],
+            "epsilon_schedule_unit_trajectories": values["epsilon_schedule_unit_trajectories"],
+        })
+    if experiment in {"trajectory_budget_selection", "batch_size_influence"}:
         scientific.update({
             "max_trajectories": values["max_trajectories"],
             "milestones": values["milestones"],
@@ -149,6 +164,12 @@ def _resolved_configuration(args: argparse.Namespace, cfg: Any, circuit_path: Pa
             if key not in {"variant", "log_z_learning_rate_configured", "log_z_learning_rate_resolved"}
         }
         values["pairing_configuration_fingerprint"] = canonical_sha256(pairing)
+    if values["experiment"] == "batch_size_influence":
+        pairing = {
+            key: value for key, value in scientific.items()
+            if key not in {"trajectories_per_update", "configured_optimizer_updates"}
+        }
+        values["batch_pairing_configuration_fingerprint"] = canonical_sha256(pairing)
     return values
 
 
@@ -160,13 +181,21 @@ def _validate_configuration(resolved: Mapping[str, Any]) -> None:
         if rate not in EXPERIMENT_4_RATES:
             raise ValueError(f"Experiment 4 logZ rate must be one of {EXPERIMENT_4_RATES}, got {rate}")
         expected_rate = rate
-    elif experiment == "trajectory_budget_selection":
+    elif experiment in {"trajectory_budget_selection", "batch_size_influence"}:
         expected_rate = 0.01
+    expected_batch_size = 4
+    if experiment == "batch_size_influence":
+        expected_batch_size = int(resolved["trajectories_per_update"])
+        if expected_batch_size not in BATCH_SIZE_INFLUENCE_BATCHES:
+            raise ValueError(
+                "Experiment 5.5 batch size must be one of "
+                f"{BATCH_SIZE_INFLUENCE_BATCHES}, got {expected_batch_size}"
+            )
     required = {
         "variant": resolved["variant"],
         "num_steps": 20,
         "available_actions": list(range(7)),
-        "trajectories_per_update": 4,
+        "trajectories_per_update": expected_batch_size,
         "policy_learning_rate": 0.001,
         "log_z_learning_rate_resolved": expected_rate,
         "reward_alpha": 4.0,
@@ -177,7 +206,7 @@ def _validate_configuration(resolved: Mapping[str, Any]) -> None:
         "exploration_warmup_updates": 20,
         "configured_optimizer_updates": (
             int(resolved["max_trajectories"]) // int(resolved["trajectories_per_update"])
-            if experiment == "trajectory_budget_selection" else 200
+            if experiment in {"trajectory_budget_selection", "batch_size_influence"} else 200
         ),
         "calibration_trajectories": 64,
         "calibration_epsilon": 0.5,
@@ -186,6 +215,8 @@ def _validate_configuration(resolved: Mapping[str, Any]) -> None:
         raise ValueError(f"variant must be one of {EXPECTED_VARIANTS}")
     if experiment == "trajectory_budget_selection" and resolved["variant"] != "zcal":
         raise ValueError("Experiment 5 requires calibrated logZ initialization (zcal)")
+    if experiment == "batch_size_influence" and resolved["variant"] != "zcal":
+        raise ValueError("Experiment 5.5 requires calibrated logZ initialization (zcal)")
     failures = {
         key: {"expected": expected, "actual": resolved.get(key)}
         for key, expected in required.items() if resolved.get(key) != expected
@@ -286,6 +317,54 @@ def _training_tensors(policy: Any, trajectories: Sequence[Any], *, cached: bool,
     return log_pf, log_pb, log_r
 
 
+def canonical_trajectory_epsilon_values(
+    *,
+    first_trajectory: int,
+    count: int,
+    schedule_trajectories: int = 800,
+    enabled: bool = True,
+    start: float = 0.5,
+    end: float = 0.01,
+    warmup_updates: int = 20,
+    decay_updates: int | None = None,
+) -> list[float]:
+    """Return the original batch-four epsilon schedule indexed by trajectory."""
+    if first_trajectory <= 0 or count <= 0:
+        raise ValueError("first_trajectory and count must be positive")
+    if schedule_trajectories % BATCH_SIZE_SCHEDULE_UNIT:
+        raise ValueError("schedule trajectories must be divisible by four")
+    return [
+        _epsilon_for_update(
+            (trajectory + BATCH_SIZE_SCHEDULE_UNIT - 1) // BATCH_SIZE_SCHEDULE_UNIT,
+            schedule_updates=schedule_trajectories // BATCH_SIZE_SCHEDULE_UNIT,
+            enabled=enabled,
+            start=start,
+            end=end,
+            warmup_updates=warmup_updates,
+            decay_updates=decay_updates,
+        )
+        for trajectory in range(first_trajectory, first_trajectory + count)
+    ]
+
+
+def _peak_resource_usage(device: torch.device) -> dict[str, int | None]:
+    peak_rss = int(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    if sys.platform == "darwin":
+        peak_rss //= 1024
+    if device.type != "cuda":
+        return {
+            "peak_host_rss_kib": peak_rss,
+            "peak_cuda_memory_allocated_bytes": None,
+            "peak_cuda_memory_reserved_bytes": None,
+        }
+    torch.cuda.synchronize(device)
+    return {
+        "peak_host_rss_kib": peak_rss,
+        "peak_cuda_memory_allocated_bytes": int(torch.cuda.max_memory_allocated(device)),
+        "peak_cuda_memory_reserved_bytes": int(torch.cuda.max_memory_reserved(device)),
+    }
+
+
 def run_experiment(args: argparse.Namespace) -> int:
     from omegaconf import OmegaConf
 
@@ -310,6 +389,9 @@ def run_experiment(args: argparse.Namespace) -> int:
     circuit_path = _resolve_circuit(args.circuit)
     device = _resolve_device(args.device)
     cfg = _compose_project_config(args.config_name)
+    if getattr(args, "batch_size", None) is not None:
+        cfg.tb.batch_size = int(args.batch_size)
+        cfg.tb.trajectories_per_episode = int(args.batch_size)
     if getattr(args, "log_z_learning_rate", None) is not None:
         cfg.tb.log_z_learning_rate = float(args.log_z_learning_rate)
     cfg.output_dir = str(output_dir)
@@ -317,12 +399,23 @@ def run_experiment(args: argparse.Namespace) -> int:
     _validate_configuration(resolved)
     batch_size = int(resolved["trajectories_per_update"])
     if args.max_trajectories < CALIBRATION_TRAJECTORIES or args.max_trajectories % batch_size:
-        raise ValueError("--max-trajectories must be at least 64 and divisible by four")
-    if args.max_trajectories > args.schedule_trajectories and resolved["experiment"] != "trajectory_budget_selection":
+        raise ValueError(
+            "--max-trajectories must be at least 64 and divisible by the configured batch size"
+        )
+    if args.max_trajectories > args.schedule_trajectories and resolved["experiment"] not in {
+        "trajectory_budget_selection", "batch_size_influence",
+    }:
         raise ValueError("max trajectories cannot exceed the epsilon schedule budget")
     milestones = sorted(set(int(value) for value in args.milestones))
-    if not milestones or milestones[-1] > args.max_trajectories or any(value < 64 or value % 4 for value in milestones):
-        raise ValueError("milestones must be divisible by four and lie in [64, max-trajectories]")
+    if (
+        not milestones
+        or milestones[-1] > args.max_trajectories
+        or any(value < 64 or value % batch_size for value in milestones)
+    ):
+        raise ValueError(
+            "milestones must be divisible by the configured batch size and lie in "
+            "[64, max-trajectories]"
+        )
 
     reward_cfg = OmegaConf.to_container(cfg.reward, resolve=True)
     if not isinstance(reward_cfg, dict):
@@ -354,6 +447,8 @@ def run_experiment(args: argparse.Namespace) -> int:
         torch.cuda.manual_seed_all(initialization_seed)
     policy = build_tb_policy(cfg, obs_dim=obs_dim, node_dim=node_dim, edge_dim=edge_dim,
                              num_actions=num_actions, available_actions=available_actions).to(device)
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
     pre_calibration_checksum = state_dict_checksum(_policy_state_cpu(policy))
     metadata["pre_calibration_parameter_checksum"] = pre_calibration_checksum
     train_generator = _torch_generator(device, seeds["training_actions"])
@@ -495,13 +590,32 @@ def run_experiment(args: argparse.Namespace) -> int:
     try:
         while counters["optimizer_updates"] < expected_updates:
             update = counters["optimizer_updates"] + 1
-            epsilon = _epsilon_for_update(update, schedule_updates=args.schedule_trajectories // batch_size,
-                                          enabled=bool(resolved["exploration_epsilon_enabled"]),
-                                          start=float(resolved["exploration_epsilon_start"]),
-                                          end=float(resolved["exploration_epsilon_end"]),
-                                          warmup_updates=int(resolved["exploration_warmup_updates"]),
-                                          decay_updates=resolved["exploration_decay_updates"])
             cached = update <= CALIBRATION_TRAJECTORIES // batch_size
+            epsilon_values: list[float]
+            if cached:
+                epsilon_values = [CALIBRATION_EPSILON] * batch_size
+            elif resolved["experiment"] == "batch_size_influence":
+                epsilon_values = canonical_trajectory_epsilon_values(
+                    first_trajectory=counters["training_trajectories"] + 1,
+                    count=batch_size,
+                    schedule_trajectories=int(args.schedule_trajectories),
+                    enabled=bool(resolved["exploration_epsilon_enabled"]),
+                    start=float(resolved["exploration_epsilon_start"]),
+                    end=float(resolved["exploration_epsilon_end"]),
+                    warmup_updates=int(resolved["exploration_warmup_updates"]),
+                    decay_updates=resolved["exploration_decay_updates"],
+                )
+            else:
+                epsilon = _epsilon_for_update(
+                    update,
+                    schedule_updates=args.schedule_trajectories // batch_size,
+                    enabled=bool(resolved["exploration_epsilon_enabled"]),
+                    start=float(resolved["exploration_epsilon_start"]),
+                    end=float(resolved["exploration_epsilon_end"]),
+                    warmup_updates=int(resolved["exploration_warmup_updates"]),
+                    decay_updates=resolved["exploration_decay_updates"],
+                )
+                epsilon_values = [epsilon] * batch_size
             policy.train()
             if cached:
                 start = (update - 1) * batch_size
@@ -515,7 +629,8 @@ def run_experiment(args: argparse.Namespace) -> int:
                     reward_class=reward_class, reward_alpha=float(resolved["reward_alpha"]),
                     reward_eps=float(resolved["reward_eps"]),
                     reward_improvement_clip=float(resolved["reward_improvement_clip"]),
-                    sample_actions=True, available_actions=available_actions, epsilon_uniform=epsilon,
+                    sample_actions=True, available_actions=available_actions,
+                    epsilon_uniform=epsilon_values,
                     action_generator=train_generator,
                 )
             log_pf, log_pb, log_r = _training_tensors(policy, trajectories, cached=cached, device=device)
@@ -563,7 +678,10 @@ def run_experiment(args: argparse.Namespace) -> int:
                 "trajectory_budget": counters["training_trajectories"],
                 "training_source": "calibration" if cached else "new_on_policy",
                 "calibration_batch_start": (update - 1) * batch_size if cached else None,
-                "epsilon_uniform": CALIBRATION_EPSILON if cached else epsilon,
+                "epsilon_uniform": float(np.mean(epsilon_values)),
+                "epsilon_uniform_min": float(min(epsilon_values)),
+                "epsilon_uniform_max": float(max(epsilon_values)),
+                "epsilon_uniform_values": epsilon_values,
                 "loss": float(loss.detach().cpu()), "residual": train_residual,
                 "target_gap": float(train_residual["log_z_target_gap"]),
                 "regression": training_score["regression"], "policy": training_score["policy"],
@@ -595,6 +713,7 @@ def run_experiment(args: argparse.Namespace) -> int:
                 if not torch.equal(train_state, train_generator.get_state()):
                     raise RuntimeError("evaluation advanced training-action generator")
                 row["wall_time_seconds"] = time.perf_counter() - started
+                row["resource_usage"] = _peak_resource_usage(device)
                 milestone_rows.append(row)
                 completed_milestones.add(budget)
                 _append_jsonl(milestones_path, row)
@@ -628,7 +747,11 @@ def run_experiment(args: argparse.Namespace) -> int:
             "emergency_checkpoint": str(emergency), "counters": counters, "milestones": milestone_rows,
             "scientific_configuration_fingerprint": resolved["scientific_configuration_fingerprint"],
             "paired_configuration_fingerprint": resolved["paired_configuration_fingerprint"],
+            "batch_pairing_configuration_fingerprint": resolved.get(
+                "batch_pairing_configuration_fingerprint"
+            ),
             "wall_time_seconds": time.perf_counter() - started,
+            "resource_usage": _peak_resource_usage(device),
         })
         raise
     summary = {
@@ -637,6 +760,9 @@ def run_experiment(args: argparse.Namespace) -> int:
         "circuit": circuit_path.stem, "seed": int(args.seed),
         "scientific_configuration_fingerprint": resolved["scientific_configuration_fingerprint"],
         "paired_configuration_fingerprint": resolved["paired_configuration_fingerprint"],
+        "batch_pairing_configuration_fingerprint": resolved.get(
+            "batch_pairing_configuration_fingerprint"
+        ),
         "pre_calibration_parameter_checksum": pre_calibration_checksum,
         "post_initialization_parameter_checksum": metadata["post_initialization_parameter_checksum"],
         "fixed_validation_checksum": fixed_checksum, "calibration_cache_checksum": calibration_checksum,
@@ -646,6 +772,7 @@ def run_experiment(args: argparse.Namespace) -> int:
         "counters": counters, "milestones": milestone_rows, "final_archive": archive.snapshot(),
         "final_checkpoint": str(checkpoints_dir / f"trajectory_{args.max_trajectories}.pt"),
         "wall_time_seconds": time.perf_counter() - started,
+        "resource_usage": _peak_resource_usage(device),
     }
     _write_json(output_dir / "run_summary.json", summary)
     print(json.dumps(_json_safe(summary), indent=2, sort_keys=True))
