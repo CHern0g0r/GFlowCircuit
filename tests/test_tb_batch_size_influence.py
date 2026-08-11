@@ -28,6 +28,7 @@ from src.experiments.tb_batch_size_influence_report import (
 )
 from src.experiments.tb_logz_calibration import (
     _resolved_configuration,
+    _set_trajectories_per_update,
     canonical_trajectory_epsilon_values,
 )
 
@@ -105,6 +106,18 @@ class EpsilonVectorTest(unittest.TestCase):
 
 
 class ConfigurationTest(unittest.TestCase):
+    def test_batch_size_override_uses_existing_tb_trajectory_field(self) -> None:
+        class StructuredTB:
+            __slots__ = ("trajectories_per_episode",)
+
+            def __init__(self) -> None:
+                self.trajectories_per_episode = 4
+
+        cfg = SimpleNamespace(tb=StructuredTB())
+        _set_trajectories_per_update(cfg, 32)
+        self.assertEqual(cfg.tb.trajectories_per_episode, 32)
+        self.assertFalse(hasattr(cfg.tb, "batch_size"))
+
     def test_scientific_cli_values_are_fixed_for_every_batch(self) -> None:
         for batch_size in BATCH_SIZES:
             args = SimpleNamespace(
@@ -139,7 +152,7 @@ class ConfigurationTest(unittest.TestCase):
 
         def resolve(batch_size: int) -> dict:
             tb = SimpleNamespace(
-                batch_size=batch_size, trajectories_per_episode=batch_size,
+                trajectories_per_episode=batch_size,
                 log_z_learning_rate=0.01, reward_alpha=4.0, reward_eps=1e-8,
                 reward_improvement_clip=2.0, exploration_epsilon_enabled=True,
                 exploration_epsilon_start=0.5, exploration_epsilon_end=0.01,

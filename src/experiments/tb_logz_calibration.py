@@ -67,6 +67,11 @@ BATCH_SIZE_INFLUENCE_BATCHES = (1, 4, 8, 16, 32)
 BATCH_SIZE_SCHEDULE_UNIT = 4
 
 
+def _set_trajectories_per_update(cfg: Any, batch_size: int) -> None:
+    """Map the experiment's batch-size term to the canonical TB config field."""
+    cfg.tb.trajectories_per_episode = int(batch_size)
+
+
 def _resolved_configuration(args: argparse.Namespace, cfg: Any, circuit_path: Path) -> dict[str, Any]:
     from omegaconf import OmegaConf
 
@@ -390,8 +395,7 @@ def run_experiment(args: argparse.Namespace) -> int:
     device = _resolve_device(args.device)
     cfg = _compose_project_config(args.config_name)
     if getattr(args, "batch_size", None) is not None:
-        cfg.tb.batch_size = int(args.batch_size)
-        cfg.tb.trajectories_per_episode = int(args.batch_size)
+        _set_trajectories_per_update(cfg, int(args.batch_size))
     if getattr(args, "log_z_learning_rate", None) is not None:
         cfg.tb.log_z_learning_rate = float(args.log_z_learning_rate)
     cfg.output_dir = str(output_dir)
