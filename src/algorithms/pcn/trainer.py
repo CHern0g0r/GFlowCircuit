@@ -13,6 +13,11 @@ from src.algorithms.pcn.eval import evaluate_pcn
 from src.algorithms.pcn.loss import pcn_cross_entropy_loss
 from src.algorithms.pcn.policy import PCNPolicy
 from src.algorithms.pcn.sampler import sample_pcn_trajectory
+from src.discovery_metrics import (
+    build_training_discovery_tracker,
+    finalize_training_discovery,
+    record_training_trajectory,
+)
 from src.metrics import TensorBoardLogger
 from src.models.mo_rewards import MultiObjectiveReward
 
@@ -69,9 +74,18 @@ class PCNTrainer:
         batch_size: int,
         desired_return_clip: bool,
         eval_target_limit: int | None,
+        discovery_metrics_enabled: bool = True,
+        discovery_emit_every_trajectories: int = 50,
     ) -> dict[str, Any]:
         optimizer = torch.optim.Adam(self.policy.parameters(), lr=float(learning_rate))
         history: list[dict[str, Any]] = []
+        discovery = build_training_discovery_tracker(
+            enabled=discovery_metrics_enabled,
+            circuits=self.train_circuits,
+            resyn2_baselines=self.resyn2_baselines,
+            emit_every_trajectories=discovery_emit_every_trajectories,
+            tensorboard_logger=self._tb,
+        )
         total_collected = 0
 
         seed_count = min(int(random_seed_episodes), int(episodes))
@@ -88,6 +102,7 @@ class PCNTrainer:
                 gamma=self.archive.gamma,
             )
             self.archive.add(trajectory)
+            record_training_trajectory(discovery, trajectory)
             total_collected += 1
 
         progress = trange(total_collected, int(episodes), desc="Training PCN")
@@ -122,6 +137,7 @@ class PCNTrainer:
                     gamma=self.archive.gamma,
                 )
                 self.archive.add(trajectory)
+                record_training_trajectory(discovery, trajectory)
                 returns_this_iter.append(float(trajectory.return_vec.sum().item()))
                 total_collected += 1
                 collected_this_iter += 1
@@ -183,9 +199,10 @@ class PCNTrainer:
                     )
 
         progress.close()
+        discovery_out = finalize_training_discovery(discovery)
         if self._tb is not None:
             self._tb.close()
-        return {"history": history}
+        return {"history": history, **discovery_out}
 
     def evaluate(
         self,

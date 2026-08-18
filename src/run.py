@@ -15,6 +15,7 @@ from src.algorithms.ppo import PPOPolicy, PPOTrainer
 from src.algorithms.pcn import PCNPolicy, PCNTrainer
 from src.algorithms.reinforce import ReinforcePolicy, ReinforceTrainer
 from src.baselines.resyn2 import build_resyn2_cache
+from src.discovery_metrics import write_discovery_artifacts
 from src.utils import (
     get_obs_dim_and_num_actions,
     load_circuits,
@@ -324,6 +325,14 @@ def main(cfg: DictConfig) -> None:
     else:
         tb_log_dir = None
 
+    discovery_cfg = OmegaConf.select(cfg, "discovery_metrics")
+    discovery_enabled_raw = OmegaConf.select(discovery_cfg, "enabled") if discovery_cfg is not None else None
+    discovery_enabled = True if discovery_enabled_raw is None else bool(discovery_enabled_raw)
+    discovery_emit_raw = (
+        OmegaConf.select(discovery_cfg, "emit_every_trajectories") if discovery_cfg is not None else None
+    )
+    discovery_emit_every = 50 if discovery_emit_raw is None else int(discovery_emit_raw)
+
     baseline = OmegaConf.select(cfg, "baseline")
     baseline_scale = float(OmegaConf.select(cfg, "baseline_scale") or 1.0)
 
@@ -430,6 +439,8 @@ def main(cfg: DictConfig) -> None:
                 exploration_warmup_episodes=tb_exploration_warmup_episodes,
                 exploration_decay_episodes=tb_exploration_decay_episodes,
                 best_of_eval_rollouts=best_of_rollouts,
+                discovery_metrics_enabled=discovery_enabled,
+                discovery_emit_every_trajectories=discovery_emit_every,
             )
             final_eval = trainer.evaluate(
                 num_steps=int(cfg.num_steps),
@@ -451,6 +462,8 @@ def main(cfg: DictConfig) -> None:
                     "run_idx": run_idx,
                     "seed": run_seed,
                     "history": train_out["history"],
+                    "discovery_front": train_out["discovery_front"],
+                    "discovery_metrics": train_out["discovery_metrics"],
                     "final_eval": final_eval,
                     "checkpoint_path": str(ckpt_path),
                 }
@@ -511,6 +524,8 @@ def main(cfg: DictConfig) -> None:
                 batch_size=batch_size,
                 desired_return_clip=desired_return_clip,
                 eval_target_limit=eval_target_limit,
+                discovery_metrics_enabled=discovery_enabled,
+                discovery_emit_every_trajectories=discovery_emit_every,
             )
             final_eval = trainer.evaluate(
                 num_steps=int(cfg.num_steps),
@@ -530,6 +545,8 @@ def main(cfg: DictConfig) -> None:
                     "run_idx": run_idx,
                     "seed": run_seed,
                     "history": train_out["history"],
+                    "discovery_front": train_out["discovery_front"],
+                    "discovery_metrics": train_out["discovery_metrics"],
                     "final_eval": final_eval,
                     "checkpoint_path": str(ckpt_path),
                 }
@@ -582,6 +599,8 @@ def main(cfg: DictConfig) -> None:
                 clip_grad_norm=float(drills_clip_grad_norm) if drills_clip_grad_norm is not None else None,
                 normalize_advantages=normalize_advantages,
                 best_of_eval_rollouts=best_of_rollouts,
+                discovery_metrics_enabled=discovery_enabled,
+                discovery_emit_every_trajectories=discovery_emit_every,
             )
             final_eval = trainer.evaluate(num_steps=int(cfg.num_steps), best_of_rollouts=best_of_rollouts)
             ckpt_path = _save_run_checkpoint(
@@ -596,6 +615,8 @@ def main(cfg: DictConfig) -> None:
                     "run_idx": run_idx,
                     "seed": run_seed,
                     "history": train_out["history"],
+                    "discovery_front": train_out["discovery_front"],
+                    "discovery_metrics": train_out["discovery_metrics"],
                     "final_eval": final_eval,
                     "checkpoint_path": str(ckpt_path),
                 }
@@ -658,6 +679,8 @@ def main(cfg: DictConfig) -> None:
                 clip_grad_norm=float(ppo_clip_grad_norm) if ppo_clip_grad_norm is not None else None,
                 gae_lambda=gae_lambda,
                 best_of_eval_rollouts=best_of_rollouts,
+                discovery_metrics_enabled=discovery_enabled,
+                discovery_emit_every_trajectories=discovery_emit_every,
             )
             final_eval = trainer.evaluate(num_steps=int(cfg.num_steps), best_of_rollouts=best_of_rollouts)
             ckpt_path = _save_run_checkpoint(
@@ -672,6 +695,8 @@ def main(cfg: DictConfig) -> None:
                     "run_idx": run_idx,
                     "seed": run_seed,
                     "history": train_out["history"],
+                    "discovery_front": train_out["discovery_front"],
+                    "discovery_metrics": train_out["discovery_metrics"],
                     "final_eval": final_eval,
                     "checkpoint_path": str(ckpt_path),
                 }
@@ -717,6 +742,8 @@ def main(cfg: DictConfig) -> None:
                 clip_grad_norm_policy=float(clip_grad_norm_policy) if clip_grad_norm_policy is not None else None,
                 clip_grad_norm_value=float(clip_grad_norm_value) if clip_grad_norm_value is not None else None,
                 normalize_returns=normalize_returns,
+                discovery_metrics_enabled=discovery_enabled,
+                discovery_emit_every_trajectories=discovery_emit_every,
             )
 
             final_eval = trainer.evaluate(num_steps=int(cfg.num_steps), best_of_rollouts=best_of_rollouts)
@@ -732,6 +759,8 @@ def main(cfg: DictConfig) -> None:
                     "run_idx": run_idx,
                     "seed": run_seed,
                     "history": train_out["history"],
+                    "discovery_front": train_out["discovery_front"],
+                    "discovery_metrics": train_out["discovery_metrics"],
                     "final_eval": final_eval,
                     "checkpoint_path": str(ckpt_path),
                 }
@@ -741,6 +770,11 @@ def main(cfg: DictConfig) -> None:
 
         print(f"Saved checkpoint: {runs[-1]['checkpoint_path']}")
 
+    discovery_artifacts = write_discovery_artifacts(
+        output_dir=output_dir,
+        algorithm=algorithm_name,
+        runs=runs,
+    )
     report = {
         "algorithm": algorithm_name,
         "hydra_config": OmegaConf.to_container(cfg, resolve=True),
@@ -754,6 +788,7 @@ def main(cfg: DictConfig) -> None:
         "train_circuits": train_circuits,
         "test_circuits": test_circuits,
         "runs": runs,
+        "discovery_artifacts": discovery_artifacts,
         "mean_final_return_across_runs": float(
             sum(r["final_eval"]["mean_final_return"] for r in runs) / max(1, len(runs))
         ),

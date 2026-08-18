@@ -23,7 +23,9 @@ reward:
   c_size: 0.5
   c_depth: 0.5
 
-episodes: 200
+# REINFORCE collects one trajectory per episode. Match GFlowNet's total of 800
+# training trajectories per seed.
+episodes: 800
 eval_every: 50
 train_ratio: 0.75
 terminal_reward: false

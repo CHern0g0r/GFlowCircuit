@@ -12,6 +12,11 @@ from src.algorithms.gflownet_tb.eval import evaluate_tb
 from src.algorithms.gflownet_tb.loss import trajectory_balance_loss
 from src.algorithms.gflownet_tb.policy import TBGFlowNetPolicy
 from src.algorithms.gflownet_tb.sampler import sample_tb_trajectories
+from src.discovery_metrics import (
+    build_training_discovery_tracker,
+    finalize_training_discovery,
+    record_training_trajectory,
+)
 from src.metrics import TensorBoardLogger
 
 
@@ -129,6 +134,8 @@ class TBGFlowNetTrainer:
         exploration_warmup_episodes: int,
         exploration_decay_episodes: int | None,
         best_of_eval_rollouts: int,
+        discovery_metrics_enabled: bool = True,
+        discovery_emit_every_trajectories: int = 50,
     ) -> dict[str, Any]:
         optimizer = _build_tb_optimizer(
             self.policy,
@@ -136,6 +143,13 @@ class TBGFlowNetTrainer:
             log_z_learning_rate=log_z_learning_rate,
         )
         history: list[dict[str, Any]] = []
+        discovery = build_training_discovery_tracker(
+            enabled=discovery_metrics_enabled,
+            circuits=self.train_circuits,
+            resyn2_baselines=self.resyn2_baselines,
+            emit_every_trajectories=discovery_emit_every_trajectories,
+            tensorboard_logger=self._tb,
+        )
 
         for ep in trange(1, episodes + 1, desc="Training TB"):
             exploration_epsilon = _tb_exploration_epsilon(
@@ -163,6 +177,8 @@ class TBGFlowNetTrainer:
                 available_actions=self.available_actions,
                 epsilon_uniform=exploration_epsilon,
             )
+            for trajectory in trajectories:
+                record_training_trajectory(discovery, trajectory)
 
             optimizer.zero_grad(set_to_none=True)
             log_pf = torch.stack([t.log_pf_sum for t in trajectories])
@@ -243,9 +259,10 @@ class TBGFlowNetTrainer:
                         },
                     )
 
+        discovery_out = finalize_training_discovery(discovery)
         if self._tb is not None:
             self._tb.close()
-        return {"history": history}
+        return {"history": history, **discovery_out}
 
     def evaluate(
         self,

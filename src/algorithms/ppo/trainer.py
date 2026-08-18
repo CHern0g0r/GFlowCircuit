@@ -14,6 +14,11 @@ from src.algorithms.ppo.loss import compute_gae, ppo_minibatch_loss
 from src.algorithms.ppo.policy import PPOPolicy
 from src.algorithms.ppo.sampler import sample_ppo_trajectory
 from src.algorithms.ppo.types import PPORollout, PPOTransition
+from src.discovery_metrics import (
+    build_training_discovery_tracker,
+    finalize_training_discovery,
+    record_training_trajectory,
+)
 from src.metrics import TensorBoardLogger
 
 
@@ -85,15 +90,26 @@ class PPOTrainer:
         clip_grad_norm: float | None,
         gae_lambda: float,
         best_of_eval_rollouts: int,
+        discovery_metrics_enabled: bool = True,
+        discovery_emit_every_trajectories: int = 50,
     ) -> dict[str, Any]:
         optimizer = torch.optim.Adam(
             list(self.policy.parameters()) + list(self.value_network.parameters()),
             lr=float(learning_rate),
         )
         history: list[dict[str, Any]] = []
+        discovery = build_training_discovery_tracker(
+            enabled=discovery_metrics_enabled,
+            circuits=self.train_circuits,
+            resyn2_baselines=self.resyn2_baselines,
+            emit_every_trajectories=discovery_emit_every_trajectories,
+            tensorboard_logger=self._tb,
+        )
 
         for ep in trange(1, int(episodes) + 1, desc="Training PPO"):
             rollout = self._collect_rollout(num_steps=int(num_steps), rollout_steps=int(rollout_steps))
+            for trajectory in rollout.trajectories:
+                record_training_trajectory(discovery, trajectory)
             transitions = rollout.transitions
             if transitions:
                 rewards = torch.tensor([t.reward for t in transitions], dtype=torch.float32, device=self.device)
@@ -233,9 +249,10 @@ class PPOTrainer:
                         },
                     )
 
+        discovery_out = finalize_training_discovery(discovery)
         if self._tb is not None:
             self._tb.close()
-        return {"history": history}
+        return {"history": history, **discovery_out}
 
     def evaluate(self, *, num_steps: int, best_of_rollouts: int = 1) -> dict[str, Any]:
         return evaluate_ppo(
@@ -249,4 +266,3 @@ class PPOTrainer:
             baseline=self.baseline,
             available_actions=self.available_actions,
         )
-
