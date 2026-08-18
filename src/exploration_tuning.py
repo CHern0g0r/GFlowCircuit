@@ -523,7 +523,6 @@ def validate_stage(
     compose: bool = True,
     python_executable: str = sys.executable,
 ) -> dict[str, Any]:
-    protocol.validate_health_gate(stage)
     selections: dict[str, Any] = {}
     dependency_roots: list[Path] = []
     if protocol.stages[stage].get("dependencies"):
@@ -558,7 +557,6 @@ def run_stage(args: argparse.Namespace, protocol: ExplorationProtocol) -> None:
     project_commit = str(args.project_commit or os.environ.get("GFC_PROJECT_COMMIT", ""))
     if not project_commit or project_commit == "SET_PROJECT_COMMIT_BEFORE_SYNC":
         raise ProtocolError("run-stage requires --project-commit or GFC_PROJECT_COMMIT")
-    protocol.validate_health_gate(stage)
     artifact_root = Path(args.artifact_root).resolve()
     artifact_base = Path(args.artifact_base).resolve() if args.artifact_base else artifact_root.parent
     selections, dependency_roots = dependency_context(

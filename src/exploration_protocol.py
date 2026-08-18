@@ -179,26 +179,34 @@ class ExplorationProtocol:
             for setting in cfg["coarse"]:
                 if setting.get("fragment"):
                     self._fragment_overrides(str(setting["fragment"]))
+        gfn = self.data["algorithms"]["gflownet"]
+        source = gfn.get("optimizer_source", {})
+        required_source = {
+            "branch", "commit", "status", "optimizer", "policy_learning_rate",
+            "log_z_learning_rate", "trajectories_per_update",
+        }
+        missing_source = required_source - set(source)
+        if missing_source:
+            raise ProtocolError(f"gflownet optimizer_source missing keys: {sorted(missing_source)}")
+        if not re.fullmatch(r"[0-9a-f]{40}", str(source["commit"])):
+            raise ProtocolError("gflownet optimizer_source.commit must be a full Git SHA")
+        expected_overrides = {
+            "learning_rate": float(source["policy_learning_rate"]),
+            "tb.log_z_learning_rate": float(source["log_z_learning_rate"]),
+            "tb.trajectories_per_episode": int(source["trajectories_per_update"]),
+        }
+        actual_overrides = gfn.get("fixed_overrides", {})
+        for path, expected in expected_overrides.items():
+            if actual_overrides.get(path) != expected:
+                raise ProtocolError(
+                    f"gflownet fixed override {path} must match optimizer_source: {expected}"
+                )
         jobs = self.data["martin"]["job_names"]
         if set(jobs) != set(self.stages):
             raise ProtocolError("martin.job_names must contain exactly all stages")
         for job_name in jobs.values():
             if _safe(job_name) != job_name:
                 raise ProtocolError(f"unsafe Martin job name: {job_name}")
-
-    def validate_health_gate(self, stage: str) -> None:
-        if stage not in self.stages:
-            raise ProtocolError(f"unknown stage: {stage}")
-        if stage not in {"smoke", "coarse", "gfn_start", "gfn_floor", "gfn_schedule", "confirmation"}:
-            return
-        gate = self.data["prerequisites"]["gfn_optimizer_health"]
-        missing = [
-            field for field in ("evidence_path", "approved_by", "approved_at")
-            if not gate.get(field)
-        ]
-        if str(gate.get("status", "")).lower() != "approved" or missing:
-            suffix = f"; missing {', '.join(missing)}" if missing else ""
-            raise ProtocolError(f"GFlowNet optimizer health is not approved{suffix}")
 
     def dependency_stages(self, stage: str, *, transitive: bool = True) -> list[str]:
         if stage not in self.stages:

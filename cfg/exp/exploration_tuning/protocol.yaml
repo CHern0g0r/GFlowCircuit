@@ -1,12 +1,7 @@
 version: 1
 campaign: exploration-tuning-v1
 
-prerequisites:
-  gfn_optimizer_health:
-    status: pending
-    evidence_path: null
-    approved_by: null
-    approved_at: null
+prerequisites: {}
 
 common:
   num_steps: 20
@@ -45,6 +40,18 @@ algorithms:
     report_algorithm: gflownet_tb
     base_config: tb_zhuDOP
     trajectories_per_episode: 4
+    optimizer_source:
+      branch: gfn_health
+      commit: 6f9d3fb48e244c671d8d7838aac45c7bd2b6bd9a
+      status: descriptive_control
+      optimizer: Adam
+      policy_learning_rate: 0.001
+      log_z_learning_rate: 0.01
+      trajectories_per_update: 4
+    fixed_overrides:
+      learning_rate: 0.001
+      tb.log_z_learning_rate: 0.01
+      tb.trajectories_per_episode: 4
     control_setting: epsilon_none
     coarse:
       - id: epsilon_none

@@ -71,9 +71,12 @@ algorithm-specific batch size. This avoids relying on mutable defaults.
 
 ## Stage driver
 
-The GFlowNet optimizer-health entry in `protocol.yaml` defaults to `pending`.
-Record an approval and evidence before validating or running any stage that
-contains GFlowNet tasks.
+The campaign pins the `gfn_health` branch's descriptive optimizer control:
+Adam with policy learning rate `0.001`, separate `logZ` learning rate `0.01`,
+and four trajectories per update. These values are explicit Hydra overrides
+for every GFlowNet task. The optimizer-health approval gate is intentionally
+waived for this campaign; the source branch did not establish a fully healthy
+winner, so exploration results must retain that caveat.
 
 ```bash
 python -m src.exploration_tuning validate --stage smoke

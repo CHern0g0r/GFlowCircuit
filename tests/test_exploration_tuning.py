@@ -21,26 +21,22 @@ from src.exploration_protocol import ExplorationProtocol, ProtocolError, Setting
 from src.exploration_tuning import _validate_attempt, build_stage_manifest, run_task
 
 
-def _approved_protocol() -> ExplorationProtocol:
-    protocol = ExplorationProtocol.load()
-    protocol.data["prerequisites"]["gfn_optimizer_health"] = {
-        "status": "approved",
-        "evidence_path": "/artifact/health/report.md",
-        "approved_by": "tester",
-        "approved_at": "2026-08-18T00:00:00Z",
-    }
-    return protocol
+def _protocol() -> ExplorationProtocol:
+    return ExplorationProtocol.load()
 
 
 class ProtocolExpansionTest(TestCase):
-    def test_pending_health_gate_blocks_gfn_stages(self) -> None:
-        protocol = ExplorationProtocol.load()
-        with self.assertRaisesRegex(ProtocolError, "not approved"):
-            protocol.validate_health_gate("smoke")
-        protocol.validate_health_gate("entropy_grid")
+    def test_gfn_optimizer_is_pinned_to_health_branch_control(self) -> None:
+        protocol = _protocol()
+        config = protocol.data["algorithms"]["gflownet"]
+        self.assertEqual(config["optimizer_source"]["branch"], "gfn_health")
+        self.assertEqual(config["optimizer_source"]["status"], "descriptive_control")
+        self.assertEqual(config["fixed_overrides"]["learning_rate"], 0.001)
+        self.assertEqual(config["fixed_overrides"]["tb.log_z_learning_rate"], 0.01)
+        self.assertEqual(config["fixed_overrides"]["tb.trajectories_per_episode"], 4)
 
     def test_static_stage_counts_and_task_ids(self) -> None:
-        protocol = _approved_protocol()
+        protocol = _protocol()
         expected = {
             "smoke": (5, 5),
             "coarse": (15, 90),
@@ -57,7 +53,7 @@ class ProtocolExpansionTest(TestCase):
             self.assertTrue(all(" " not in task.task_id for task in tasks))
 
     def test_gfn_dynamic_grids_follow_previous_noncontrol(self) -> None:
-        protocol = _approved_protocol()
+        protocol = _protocol()
         winner = next(
             setting for setting in protocol.settings_for_stage("gfn_start")
             if setting.setting_id == "start_0p25"
@@ -89,7 +85,7 @@ class ProtocolExpansionTest(TestCase):
         )
 
     def test_entropy_neighbors_and_confirmation_controls(self) -> None:
-        protocol = _approved_protocol()
+        protocol = _protocol()
         grid = protocol.settings_for_stage("entropy_grid")
         selections = {}
         for algorithm in ("reinforce", "ppo", "drills"):
@@ -108,7 +104,7 @@ class ProtocolExpansionTest(TestCase):
             self.assertIn(0.003, values)
 
     def test_budget_translation(self) -> None:
-        protocol = _approved_protocol()
+        protocol = _protocol()
         tasks = protocol.build_tasks("coarse", protocol.settings_for_stage("coarse"))
         episodes = {task.algorithm: task.episodes for task in tasks}
         self.assertEqual(episodes["gflownet"], 50)
@@ -158,7 +154,7 @@ class AnalysisTest(TestCase):
         self.assertEqual(first, second)
 
     def test_stage_analysis_writes_reproducible_selection_artifacts(self) -> None:
-        protocol = _approved_protocol()
+        protocol = _protocol()
         settings = protocol.settings_for_stage("gfn_start")
         tasks = protocol.build_tasks("gfn_start", settings)
         with TemporaryDirectory() as directory:
@@ -247,7 +243,7 @@ class RunnerTest(TestCase):
         return run
 
     def test_complete_task_is_reused_and_invalid_result_gets_new_attempt(self) -> None:
-        protocol = _approved_protocol()
+        protocol = _protocol()
         task = protocol.build_tasks("smoke", protocol.settings_for_stage("smoke"))[1]
         with TemporaryDirectory() as directory:
             root = Path(directory)
@@ -289,7 +285,7 @@ class RunnerTest(TestCase):
             self.assertTrue(attempt1.exists())
 
     def test_manifest_reuses_matching_dependency_task(self) -> None:
-        protocol = _approved_protocol()
+        protocol = _protocol()
         settings = protocol.settings_for_stage("gfn_start")
         tasks = protocol.build_tasks("gfn_start", settings)
         control = next(task for task in tasks if task.setting.control)
@@ -327,7 +323,7 @@ class RunnerTest(TestCase):
             self.assertEqual(reused["source_attempt"], str(source_attempt))
 
     def test_attempt_validation_rejects_missing_checkpoint_wrong_config_and_samples(self) -> None:
-        protocol = _approved_protocol()
+        protocol = _protocol()
         task = protocol.build_tasks("smoke", protocol.settings_for_stage("smoke"))[1]
         with TemporaryDirectory() as directory:
             root = Path(directory)

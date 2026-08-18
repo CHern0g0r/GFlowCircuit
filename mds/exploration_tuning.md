@@ -66,8 +66,8 @@ machine-readable matrix in `cfg/exp/exploration_tuning/protocol.yaml` and
 stage-specific Martin wrappers in the configured `gflowcircuit` scripts
 project. The driver keeps one seed per resumable task, validates Hydra
 composition before training, samples final checkpoints, and produces the CSV,
-JSON, and Markdown selection artifacts described below. The optimizer-health
-approval and reviewed project commit remain explicit pre-submission gates.
+JSON, and Markdown selection artifacts described below. The reviewed project
+commit remains an explicit pre-submission gate.
 
 ## Experimental invariants
 
@@ -104,9 +104,13 @@ Freeze all remaining fields to the algorithm's named base configuration:
 This includes reward, encoder, head, optimizer, learning rates, discount,
 baseline, PPO epochs and clipping, PCN archive/training parameters, and the
 GFlowNet reward temperature. Do not tune reward temperature and exploration in
-the same sweep. The optimizer-health gate in `mds/undertrained_gfn.md` must be
-satisfied before using this experiment to draw conclusions about GFlowNet
-exploration.
+the same sweep. For this campaign, the manual optimizer-health approval is
+waived and the `gfn_health` branch's descriptive control is pinned explicitly:
+Adam, policy learning rate `0.001`, separate `logZ` learning rate `0.01`, and
+four trajectories per update (source commit
+`6f9d3fb48e244c671d8d7838aac45c7bd2b6bd9a`). That branch did not establish a
+fully healthy optimizer winner, so any GFlowNet exploration conclusion must be
+reported with this unresolved-optimizer caveat.
 
 Translate the trajectory budget as follows:
 
