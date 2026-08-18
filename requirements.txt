@@ -2,6 +2,7 @@
 torch
 torch-geometric
 numpy
+pandas
 pyyaml
 hydra-core>=1.3
 omegaconf

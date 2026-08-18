@@ -1,0 +1,154 @@
+version: 1
+campaign: exploration-tuning-v1
+
+prerequisites:
+  gfn_optimizer_health:
+    status: pending
+    evidence_path: null
+    approved_by: null
+    approved_at: null
+
+common:
+  num_steps: 20
+  available_actions: [0, 1, 2, 3, 4, 5, 6]
+  evaluation_seed: 42
+  discovery_emit_every_trajectories: 50
+  hypervolume_reference: [1.0, 1.0]
+  practical_tie_threshold: 0.02
+  bootstrap_repetitions: 10000
+  bootstrap_seed: 20260818
+
+budgets:
+  smoke:
+    training_trajectories: 20
+    seeds: [0]
+    evaluation_samples: 2
+  screen:
+    training_trajectories: 200
+    seeds: [0, 1, 2]
+    evaluation_samples: 20
+  confirmation:
+    training_trajectories: 800
+    seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+    evaluation_samples: 50
+
+circuits:
+  C1355:
+    dataset_cfg: cfg/data/zhu2020/C1355.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/C1355.blif
+  dalu:
+    dataset_cfg: cfg/data/zhu2020/dalu.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/dalu.blif
+
+algorithms:
+  gflownet:
+    report_algorithm: gflownet_tb
+    base_config: tb_zhuDOP
+    trajectories_per_episode: 4
+    control_setting: epsilon_none
+    coarse:
+      - id: epsilon_none
+        fragment: gflownet/epsilon_none
+        exploration_rank: 0.0
+        control: true
+      - id: epsilon_low
+        fragment: gflownet/epsilon_low
+        exploration_rank: 0.10
+      - id: epsilon_current
+        fragment: gflownet/epsilon_current
+        exploration_rank: 0.50
+  reinforce:
+    report_algorithm: reinforce
+    base_config: zhuDOP
+    trajectories_per_episode: 1
+    control_setting: entropy_none
+    entropy_path: entropy_beta
+    coarse:
+      - {id: entropy_none, fragment: reinforce/entropy_none, exploration_rank: 0.0, control: true}
+      - {id: entropy_low, fragment: reinforce/entropy_low, exploration_rank: 0.001}
+      - {id: entropy_high, fragment: reinforce/entropy_high, exploration_rank: 0.01}
+  ppo:
+    report_algorithm: ppo
+    base_config: ppo_zhuDOP
+    trajectories_per_episode: 4
+    entropy_path: algorithm.ppo.entropy_beta
+    control_setting: entropy_none
+    fixed_overrides:
+      algorithm.ppo.rollout_steps: 80
+    coarse:
+      - {id: entropy_none, fragment: ppo/entropy_none, exploration_rank: 0.0, control: true}
+      - {id: entropy_low, fragment: ppo/entropy_low, exploration_rank: 0.001}
+      - {id: entropy_high, fragment: ppo/entropy_high, exploration_rank: 0.01}
+  drills:
+    report_algorithm: drills_a2c
+    base_config: drillsDOP
+    trajectories_per_episode: 4
+    entropy_path: algorithm.drills.entropy_beta
+    control_setting: entropy_none
+    coarse:
+      - {id: entropy_none, fragment: drills/entropy_none, exploration_rank: 0.0, control: true}
+      - {id: entropy_low, fragment: drills/entropy_low, exploration_rank: 0.001}
+      - {id: entropy_high, fragment: drills/entropy_high, exploration_rank: 0.01}
+  pcn:
+    report_algorithm: pcn
+    base_config: pcn_zhu
+    trajectories_per_episode: 1
+    control_setting: no_fallback_noise
+    coarse:
+      - {id: no_fallback_noise, fragment: pcn/no_fallback_noise, exploration_rank: 32.0, control: true}
+      - {id: balanced, fragment: pcn/balanced, exploration_rank: 32.05}
+      - {id: more_random_seeding, fragment: pcn/more_random_seeding, exploration_rank: 64.05}
+
+refinement:
+  gfn_start:
+    epsilon_start: [0.05, 0.10, 0.25, 0.50]
+    epsilon_end: 0.01
+    warmup: 5
+    decay: 25
+  gfn_floor:
+    epsilon_end: [0.0, 0.01, 0.05]
+  gfn_schedule:
+    schedules: [[0, 25], [5, 15], [5, 25], [5, 40], [20, 20]]
+  entropy_grid:
+    beta: [0.0, 0.0001, 0.001, 0.01]
+  entropy_neighbors:
+    factor: 3.0
+    zero_neighbors: [0.00001, 0.00003]
+  pcn_seeds:
+    random_seed_episodes: [16, 32, 64]
+  pcn_noise:
+    pairs: [[0.0, 0.0], [0.01, 0.01], [0.05, 0.01], [0.10, 0.01]]
+  pcn_interaction:
+    top_seed_counts: 2
+    top_noise_pairs: 2
+
+stages:
+  smoke: {dependencies: [], budget: smoke, circuits: [C1355]}
+  coarse: {dependencies: [smoke], budget: screen, circuits: [C1355, dalu]}
+  gfn_start: {dependencies: [coarse], budget: screen, circuits: [C1355, dalu]}
+  gfn_floor: {dependencies: [gfn_start], budget: screen, circuits: [C1355, dalu]}
+  gfn_schedule: {dependencies: [gfn_floor], budget: screen, circuits: [C1355, dalu]}
+  entropy_grid: {dependencies: [coarse], budget: screen, circuits: [C1355, dalu]}
+  entropy_neighbors: {dependencies: [entropy_grid], budget: screen, circuits: [C1355, dalu]}
+  pcn_seeds: {dependencies: [coarse], budget: screen, circuits: [C1355, dalu]}
+  pcn_noise: {dependencies: [pcn_seeds], budget: screen, circuits: [C1355, dalu]}
+  pcn_interaction: {dependencies: [pcn_noise], budget: screen, circuits: [C1355, dalu]}
+  confirmation:
+    dependencies: [gfn_schedule, entropy_neighbors, pcn_interaction]
+    budget: confirmation
+    circuits: [C1355, dalu]
+
+martin:
+  artifact_base: /shared/home/fedor.chernogorskii/agent/art/gflowcircuit
+  job_names:
+    smoke: gfc-explore-smoke-v1
+    coarse: gfc-explore-coarse-v1
+    gfn_start: gfc-explore-gfn-start-v1
+    gfn_floor: gfc-explore-gfn-floor-v1
+    gfn_schedule: gfc-explore-gfn-schedule-v1
+    entropy_grid: gfc-explore-entropy-grid-v1
+    entropy_neighbors: gfc-explore-entropy-neighbors-v1
+    pcn_seeds: gfc-explore-pcn-seeds-v1
+    pcn_noise: gfc-explore-pcn-noise-v1
+    pcn_interaction: gfc-explore-pcn-interaction-v1
+    confirmation: gfc-explore-confirm-v1

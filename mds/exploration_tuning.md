@@ -61,13 +61,13 @@ interpreting results:
   is diagnostic data and must not be mixed with post-training evaluation
   samples used for model selection.
 
-The repository currently contains no exploration-specific launcher, SLURM
-script, or final-sample aggregation script. `cfg/exp/exploration_tuning/README.md`
-describes such scripts, but they are not present in this version. The commands
-and analysis below therefore form the executable contract. Hydra could not be
-composition-tested in the inspected shell because `hydra-core` was not
-installed there; it is declared in `requirements.txt` and must be installed in
-the experiment environment before the smoke test.
+The protocol is implemented by `python -m src.exploration_tuning`, with the
+machine-readable matrix in `cfg/exp/exploration_tuning/protocol.yaml` and
+stage-specific Martin wrappers in the configured `gflowcircuit` scripts
+project. The driver keeps one seed per resumable task, validates Hydra
+composition before training, samples final checkpoints, and produces the CSV,
+JSON, and Markdown selection artifacts described below. The optimizer-health
+approval and reviewed project commit remain explicit pre-submission gates.
 
 ## Experimental invariants
 

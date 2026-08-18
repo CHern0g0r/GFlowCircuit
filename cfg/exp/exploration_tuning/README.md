@@ -1,9 +1,14 @@
 # Exploration-tuning pilot
 
-This directory contains exploration-only Hydra fragments for a fast screening
-experiment. The training protocol, circuit selection, and output paths are
-specified explicitly by the accompanying SLURM scripts rather than by these
-fragments.
+This directory contains the exploration-only Hydra fragments and the canonical
+`protocol.yaml` used by `python -m src.exploration_tuning`. The driver expands
+one task per seed, validates resolved Hydra configs, resumes through immutable
+attempt directories, samples final checkpoints, and writes the selection
+reports specified in `mds/exploration_tuning.md`.
+
+The Martin wrappers live in the local scripts repository under
+`projects/gflowcircuit/scr/gfc_explore_*_v1.slurm`. Each wrapper runs exactly
+one reviewed stage and never submits its successor.
 
 ## Experiment matrix
 
@@ -57,12 +62,36 @@ override. For example:
 ```bash
 python -m src.run --config-name tb_zhuDOP \
   "+exp/exploration_tuning=gflownet/epsilon_low" \
-  data=zhu2020/C1355
+  dataset_cfg=cfg/data/zhu2020/C1355.yaml
 ```
 
-The SLURM scripts also pass all budget-sensitive values explicitly, including
-the action set, horizon, seed count, evaluation cadence, and algorithm-specific
-batch size. This avoids relying on mutable defaults.
+The stage driver passes all budget-sensitive values explicitly, including the
+action set, horizon, seed, evaluation cadence, output directory, and
+algorithm-specific batch size. This avoids relying on mutable defaults.
+
+## Stage driver
+
+The GFlowNet optimizer-health entry in `protocol.yaml` defaults to `pending`.
+Record an approval and evidence before validating or running any stage that
+contains GFlowNet tasks.
+
+```bash
+python -m src.exploration_tuning validate --stage smoke
+
+python -m src.exploration_tuning run-stage \
+  --stage smoke \
+  --artifact-root /shared/home/fedor.chernogorskii/agent/art/gflowcircuit/gfc-explore-smoke-v1 \
+  --workers 4 \
+  --project-commit PROJECT_COMMIT
+
+python -m src.exploration_tuning analyze \
+  --stage smoke \
+  --artifact-root /shared/home/fedor.chernogorskii/agent/art/gflowcircuit/gfc-explore-smoke-v1
+```
+
+Use the committed Martin wrappers for actual execution. The direct commands
+above document and test the project-owned interface; they are not a local GPU
+execution path.
 
 ## Evaluation and selection
 
@@ -75,7 +104,9 @@ Mean per-seed hypervolume is the primary criterion. Normalize each setting's
 mean hypervolume by the best mean hypervolume for that algorithm on the same
 circuit, then average the two normalized circuit scores. If two settings are
 within 0.02, prefer the setting with the higher minimum normalized circuit
-score. If still tied, use pooled hypervolume and then expected QoR.
+score. If still tied, prefer mean product improvement and then the
+lower-exploration setting. Pooled hypervolume is reported but never used for
+selection.
 
 This suite is a screening experiment, not a final algorithm comparison. Confirm
 the selected setting and the no-explicit-exploration control later with the full
