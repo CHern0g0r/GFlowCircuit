@@ -1,0 +1,361 @@
+version: 1
+campaign: baseline-training-tuning-v1
+
+common:
+  num_steps: 20
+  available_actions: [0, 1, 2, 3, 4, 5, 6]
+  evaluation_seed: 42
+  evaluation_samples: 50
+  discovery_emit_every_trajectories: 50
+  hypervolume_reference: [1.0, 1.0]
+  practical_tie_threshold: 0.02
+  plateau_relative_tolerance: 0.02
+  bootstrap_repetitions: 10000
+  bootstrap_seed: 20260819
+  screen_training_trajectories: 800
+  budget_grid: [200, 400, 800, 1600, 3200]
+  conditional_extension_trajectory: 6400
+  screen_seeds: [0, 1, 2]
+  confirmation_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+circuits:
+  C1355:
+    role: smaller_structured_logic
+    dataset_cfg: cfg/data/zhu2020/C1355.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/C1355.blif
+  dalu:
+    role: medium_alu_datapath
+    dataset_cfg: cfg/data/zhu2020/dalu.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/dalu.blif
+
+algorithms:
+  reinforce:
+    report_algorithm: reinforce
+    base_config: zhuDOP
+    trajectories_per_episode: 1
+    frozen_exploration:
+      source: mds/exploration_tuning.md
+      status: user_accepted_screening_winner
+      entropy_beta: 0.01
+    fixed_overrides:
+      entropy_beta: 0.01
+      baseline: zhu_resyn2
+      baseline_scale: 1.0
+      terminal_reward: false
+    profiles:
+      - id: control
+        control: true
+        overrides:
+          policy_learning_rate: 0.0008
+          value_learning_rate: 0.003
+          gamma: 0.9
+          normalize_returns: false
+          clip_grad_norm_policy: null
+          clip_grad_norm_value: null
+      - id: policy_lr_low
+        overrides:
+          policy_learning_rate: 0.0003
+          value_learning_rate: 0.003
+          gamma: 0.9
+          normalize_returns: false
+          clip_grad_norm_policy: null
+          clip_grad_norm_value: null
+      - id: policy_lr_high
+        overrides:
+          policy_learning_rate: 0.002
+          value_learning_rate: 0.003
+          gamma: 0.9
+          normalize_returns: false
+          clip_grad_norm_policy: null
+          clip_grad_norm_value: null
+      - id: value_lr_low
+        overrides:
+          policy_learning_rate: 0.0008
+          value_learning_rate: 0.001
+          gamma: 0.9
+          normalize_returns: false
+          clip_grad_norm_policy: null
+          clip_grad_norm_value: null
+      - id: value_lr_high
+        overrides:
+          policy_learning_rate: 0.0008
+          value_learning_rate: 0.01
+          gamma: 0.9
+          normalize_returns: false
+          clip_grad_norm_policy: null
+          clip_grad_norm_value: null
+      - id: long_credit
+        overrides:
+          policy_learning_rate: 0.0008
+          value_learning_rate: 0.003
+          gamma: 0.99
+          normalize_returns: false
+          clip_grad_norm_policy: null
+          clip_grad_norm_value: null
+      - id: normalized_returns
+        overrides:
+          policy_learning_rate: 0.0008
+          value_learning_rate: 0.003
+          gamma: 0.9
+          normalize_returns: true
+          clip_grad_norm_policy: null
+          clip_grad_norm_value: null
+
+  drills:
+    report_algorithm: drills_a2c
+    base_config: drillsDOP
+    trajectories_per_episode: 4
+    frozen_exploration:
+      source: mds/exploration_tuning.md
+      status: user_accepted_screening_winner
+      algorithm.drills.entropy_beta: 0.0003
+    fixed_overrides:
+      algorithm.drills.entropy_beta: 0.0003
+      algorithm.drills.trajectories_per_episode: 4
+      baseline: zhu_resyn2
+      baseline_scale: 1.0
+    profiles:
+      - id: control
+        control: true
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.drills.value_loss_coef: 0.5
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+      - id: learning_rate_low
+        overrides:
+          learning_rate: 0.0003
+          gamma: 0.9
+          algorithm.drills.value_loss_coef: 0.5
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+      - id: learning_rate_high
+        overrides:
+          learning_rate: 0.003
+          gamma: 0.9
+          algorithm.drills.value_loss_coef: 0.5
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+      - id: value_loss_low
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.drills.value_loss_coef: 0.25
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+      - id: value_loss_high
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.drills.value_loss_coef: 1.0
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+      - id: long_credit
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.99
+          algorithm.drills.value_loss_coef: 0.5
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+      - id: normalized_advantages
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.drills.value_loss_coef: 0.5
+          algorithm.drills.normalize_advantages: true
+          algorithm.drills.clip_grad_norm: null
+
+  ppo:
+    report_algorithm: ppo
+    base_config: ppo_zhuDOP
+    trajectories_per_episode: 4
+    frozen_exploration:
+      source: mds/exploration_tuning.md
+      status: user_accepted_provisional_grid_edge_winner
+      algorithm.ppo.entropy_beta: 0.03
+    fixed_overrides:
+      algorithm.ppo.entropy_beta: 0.03
+      algorithm.ppo.rollout_steps: 80
+      baseline: zhu_resyn2
+      baseline_scale: 1.0
+    profiles:
+      - id: control
+        control: true
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.ppo.ppo_epochs: 20
+          algorithm.ppo.minibatch_size: 64
+          algorithm.ppo.clip_eps: 0.2
+          algorithm.ppo.value_loss_coef: 0.5
+          algorithm.ppo.normalize_advantages: true
+          algorithm.ppo.clip_grad_norm: null
+          algorithm.ppo.gae_lambda: 0.95
+      - id: learning_rate_low
+        overrides:
+          learning_rate: 0.0003
+          gamma: 0.9
+          algorithm.ppo.ppo_epochs: 20
+          algorithm.ppo.minibatch_size: 64
+          algorithm.ppo.clip_eps: 0.2
+          algorithm.ppo.value_loss_coef: 0.5
+          algorithm.ppo.normalize_advantages: true
+          algorithm.ppo.clip_grad_norm: null
+          algorithm.ppo.gae_lambda: 0.95
+      - id: learning_rate_high
+        overrides:
+          learning_rate: 0.003
+          gamma: 0.9
+          algorithm.ppo.ppo_epochs: 20
+          algorithm.ppo.minibatch_size: 64
+          algorithm.ppo.clip_eps: 0.2
+          algorithm.ppo.value_loss_coef: 0.5
+          algorithm.ppo.normalize_advantages: true
+          algorithm.ppo.clip_grad_norm: null
+          algorithm.ppo.gae_lambda: 0.95
+      - id: epochs_low
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.ppo.ppo_epochs: 10
+          algorithm.ppo.minibatch_size: 64
+          algorithm.ppo.clip_eps: 0.2
+          algorithm.ppo.value_loss_coef: 0.5
+          algorithm.ppo.normalize_advantages: true
+          algorithm.ppo.clip_grad_norm: null
+          algorithm.ppo.gae_lambda: 0.95
+      - id: epochs_high
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.ppo.ppo_epochs: 40
+          algorithm.ppo.minibatch_size: 64
+          algorithm.ppo.clip_eps: 0.2
+          algorithm.ppo.value_loss_coef: 0.5
+          algorithm.ppo.normalize_advantages: true
+          algorithm.ppo.clip_grad_norm: null
+          algorithm.ppo.gae_lambda: 0.95
+      - id: clip_low
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.ppo.ppo_epochs: 20
+          algorithm.ppo.minibatch_size: 64
+          algorithm.ppo.clip_eps: 0.1
+          algorithm.ppo.value_loss_coef: 0.5
+          algorithm.ppo.normalize_advantages: true
+          algorithm.ppo.clip_grad_norm: null
+          algorithm.ppo.gae_lambda: 0.95
+      - id: clip_high
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.ppo.ppo_epochs: 20
+          algorithm.ppo.minibatch_size: 64
+          algorithm.ppo.clip_eps: 0.3
+          algorithm.ppo.value_loss_coef: 0.5
+          algorithm.ppo.normalize_advantages: true
+          algorithm.ppo.clip_grad_norm: null
+          algorithm.ppo.gae_lambda: 0.95
+      - id: long_credit
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.99
+          algorithm.ppo.ppo_epochs: 20
+          algorithm.ppo.minibatch_size: 64
+          algorithm.ppo.clip_eps: 0.2
+          algorithm.ppo.value_loss_coef: 0.5
+          algorithm.ppo.normalize_advantages: true
+          algorithm.ppo.clip_grad_norm: null
+          algorithm.ppo.gae_lambda: 0.95
+
+stages:
+  smoke:
+    kind: smoke
+    dependencies: []
+    algorithms: [reinforce, drills, ppo]
+    circuits: [C1355]
+  screen_reinforce:
+    kind: screen
+    algorithm: reinforce
+    dependencies: [smoke]
+    circuits: [C1355, dalu]
+  screen_drills:
+    kind: screen
+    algorithm: drills
+    dependencies: [smoke]
+    circuits: [C1355, dalu]
+  screen_ppo:
+    kind: screen
+    algorithm: ppo
+    dependencies: [smoke]
+    circuits: [C1355, dalu]
+  budget_reinforce:
+    kind: budget
+    algorithm: reinforce
+    dependencies: [screen_reinforce]
+    circuits: [C1355, dalu]
+  budget_drills:
+    kind: budget
+    algorithm: drills
+    dependencies: [screen_drills]
+    circuits: [C1355, dalu]
+  budget_ppo:
+    kind: budget
+    algorithm: ppo
+    dependencies: [screen_ppo]
+    circuits: [C1355, dalu]
+  extend_reinforce:
+    kind: extend
+    algorithm: reinforce
+    dependencies: [budget_reinforce]
+    circuits: [C1355, dalu]
+  extend_drills:
+    kind: extend
+    algorithm: drills
+    dependencies: [budget_drills]
+    circuits: [C1355, dalu]
+  extend_ppo:
+    kind: extend
+    algorithm: ppo
+    dependencies: [budget_ppo]
+    circuits: [C1355, dalu]
+  confirm_reinforce:
+    kind: confirm
+    algorithm: reinforce
+    dependencies: [extend_reinforce]
+    circuits: [C1355, dalu]
+  confirm_drills:
+    kind: confirm
+    algorithm: drills
+    dependencies: [extend_drills]
+    circuits: [C1355, dalu]
+  confirm_ppo:
+    kind: confirm
+    algorithm: ppo
+    dependencies: [extend_ppo]
+    circuits: [C1355, dalu]
+  common_budget:
+    kind: common
+    dependencies: [confirm_reinforce, confirm_drills, confirm_ppo]
+    algorithms: [reinforce, drills, ppo]
+    circuits: [C1355, dalu]
+
+martin:
+  artifact_base: /shared/home/fedor.chernogorskii/agent/art/gflowcircuit
+  job_names:
+    smoke: gfc-base-smoke-v1
+    screen_reinforce: gfc-base-screen-rein-v1
+    screen_drills: gfc-base-screen-drills-v1
+    screen_ppo: gfc-base-screen-ppo-v1
+    budget_reinforce: gfc-base-budget-rein-v1
+    budget_drills: gfc-base-budget-drills-v1
+    budget_ppo: gfc-base-budget-ppo-v1
+    extend_reinforce: gfc-base-extend-rein-v1
+    extend_drills: gfc-base-extend-drills-v1
+    extend_ppo: gfc-base-extend-ppo-v1
+    confirm_reinforce: gfc-base-confirm-rein-v1
+    confirm_drills: gfc-base-confirm-drills-v1
+    confirm_ppo: gfc-base-confirm-ppo-v1
+    common_budget: gfc-base-common-v1

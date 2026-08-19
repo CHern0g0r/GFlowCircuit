@@ -210,6 +210,8 @@ def _task_commands(
 
 
 def _validate_attempt(task: ExperimentTask, attempt_dir: Path, protocol: ExplorationProtocol) -> None:
+    import csv
+
     train_dir = attempt_dir / "train"
     config_path = train_dir / ".hydra" / "config.yaml"
     if not config_path.is_file():
@@ -243,11 +245,30 @@ def _validate_attempt(task: ExperimentTask, attempt_dir: Path, protocol: Explora
         raise ValueError(
             f"report algorithm mismatch: expected {task.report_algorithm}, got {report.get('algorithm')}"
         )
+    discovery_path = train_dir / "discovery_metrics.csv"
+    if not discovery_path.is_file():
+        raise ValueError(f"discovery_metrics.csv is missing: {discovery_path}")
+    with discovery_path.open("r", encoding="utf-8", newline="") as handle:
+        discovery_rows = list(csv.DictReader(handle))
+    final_circuit_rows = [
+        row
+        for row in discovery_rows
+        if row.get("row_type") == "circuit"
+        and str(row.get("is_final", "")).lower() == "true"
+    ]
+    if len(final_circuit_rows) != 1:
+        raise ValueError(
+            f"expected one final circuit discovery row, found {len(final_circuit_rows)}"
+        )
+    observed_trajectories = int(float(final_circuit_rows[0]["local_trajectory"]))
+    if observed_trajectories != int(task.training_trajectories):
+        raise ValueError(
+            f"training trajectory mismatch: expected {task.training_trajectories}, "
+            f"got {observed_trajectories}"
+        )
     points_path = train_dir / "points.csv"
     if not points_path.is_file():
         raise ValueError(f"points.csv is missing: {points_path}")
-    import csv
-
     with points_path.open("r", encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
     references = [row for row in rows if not str(row.get("run_id", "")).strip()]

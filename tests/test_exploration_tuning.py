@@ -231,6 +231,20 @@ class RunnerTest(TestCase):
                 (train_dir / f"{task.report_algorithm}_report.json").write_text(
                     json.dumps({"algorithm": task.report_algorithm}), encoding="utf-8"
                 )
+                with (train_dir / "discovery_metrics.csv").open("w", encoding="utf-8", newline="") as handle:
+                    writer = csv.DictWriter(
+                        handle,
+                        fieldnames=["row_type", "circuit", "local_trajectory", "is_final"],
+                    )
+                    writer.writeheader()
+                    writer.writerow(
+                        {
+                            "row_type": "circuit",
+                            "circuit": task.circuit_path,
+                            "local_trajectory": task.training_trajectories,
+                            "is_final": "true",
+                        }
+                    )
             else:
                 with (train_dir / "points.csv").open("w", encoding="utf-8", newline="") as handle:
                     writer = csv.DictWriter(handle, fieldnames=["circuit", "run_id", "size", "depth"])
@@ -351,6 +365,22 @@ class RunnerTest(TestCase):
                 _validate_attempt(task, attempt, protocol)
             config["seed"] = task.seed
             config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+            discovery_path = attempt / "train" / "discovery_metrics.csv"
+            with discovery_path.open("r", encoding="utf-8", newline="") as handle:
+                discovery_rows = list(csv.DictReader(handle))
+            discovery_rows[0]["local_trajectory"] = str(task.training_trajectories - 1)
+            with discovery_path.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=list(discovery_rows[0]))
+                writer.writeheader()
+                writer.writerows(discovery_rows)
+            with self.assertRaisesRegex(ValueError, "training trajectory mismatch"):
+                _validate_attempt(task, attempt, protocol)
+            discovery_rows[0]["local_trajectory"] = str(task.training_trajectories)
+            with discovery_path.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=list(discovery_rows[0]))
+                writer.writeheader()
+                writer.writerows(discovery_rows)
 
             points_path = attempt / "train" / "points.csv"
             rows = points_path.read_text(encoding="utf-8").splitlines()
