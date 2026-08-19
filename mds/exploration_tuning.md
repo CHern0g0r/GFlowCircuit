@@ -343,3 +343,272 @@ Before accepting a winner, verify that:
 
 Only after these checks should the per-algorithm winners be frozen and used in
 the final GFlowNet-versus-baselines experiment on untouched circuits.
+
+## Results
+
+### Campaign status and interpretation
+
+Results were collected from the Martin artifacts on 2026-08-19. All stages
+from smoke validation through `pcn_interaction` completed on project commit
+`da80471c4ad292b84053a3359fe70cd7ce56e3c6` with protocol hash
+`25ce67a9122520341e7e59b7eed4b64fc92e16f095bff9d82590257add43fe93`.
+The acceptance audit covered 431 stage-task records representing 239 actual
+training tasks after duplicate reuse. Every new task had one validated
+checkpoint, the exact trajectory and sample counts, successful training and
+sampling exit codes, and a single `attempt_001`; no retry was required.
+
+The ten-seed, 800-trajectory `confirmation` stage has not yet been run.
+Consequently, the decisions below are the best **screening selections** and
+the configurations to carry forward, not yet confirmed settings for the final
+algorithm benchmark. Canonical machine-readable results remain under
+`/shared/home/fedor.chernogorskii/agent/art/gflowcircuit/gfc-explore-*-v1`.
+
+| Stage | New tasks | Reused tasks | Selection |
+| --- | ---: | ---: | --- |
+| `smoke` | 5 | 0 | All five base configurations validated |
+| `coarse` | 90 | 0 | GFlowNet `epsilon_current`; entropy `1e-2` for all three policy-gradient baselines; PCN `balanced` |
+| `gfn_start` | 24 | 6 | epsilon start `0.10` |
+| `gfn_floor` | 12 | 12 | epsilon end `0` |
+| `gfn_schedule` | 24 | 12 | warmup 5, decay 25 |
+| `entropy_grid` | 18 | 54 | DRiLLS-A2C `1e-4`; PPO `1e-2`; REINFORCE `1e-2` |
+| `entropy_neighbors` | 36 | 72 | DRiLLS-A2C `3e-4`; PPO `3e-2`; REINFORCE `1e-2` |
+| `pcn_seeds` | 12 | 6 | 64 random seed episodes |
+| `pcn_noise` | 12 | 12 | scale `0.10`, minimum sigma `0.01` |
+| `pcn_interaction` | 6 | 18 | 64 seeds with scale `0.10`, minimum sigma `0.01` |
+
+In the comparison tables, `HV` is mean per-seed strict normalized
+hypervolume at reference `(1,1)`, shown as mean +/- standard deviation over
+three seeds. `Score` is the declared mean two-circuit relative score, `Min` is
+the smaller circuit-relative score, and `Product` is the mean terminal product
+improvement over both circuits. Tables are ordered by the recorded selection
+ranking. Pooled hypervolume was checked in the artifacts but was not used for
+selection.
+
+| Method | Best observed exploration configuration | Winner score | Control score | Score gain |
+| --- | --- | ---: | ---: | ---: |
+| GFlowNet-TB | epsilon `0.10 -> 0`, warmup 5, decay 25 | 0.981 | 0.705 | +0.276 |
+| REINFORCE | entropy beta `0.01` | 1.000 | 0.814 | +0.186 |
+| PPO | entropy beta `0.03` | 0.985 | 0.861 | +0.123 |
+| DRiLLS-A2C | entropy beta `0.0003` | 0.972 | 0.690 | +0.281 |
+| PCN | 64 seed episodes, noise scale `0.10`, minimum sigma `0.01` | 0.901 | 0.500 | +0.401 |
+
+### GFlowNet-TB
+
+#### Results
+
+The start sweep fixed epsilon end at `0.01`, warmup at 5, and decay at 25.
+
+| Epsilon start | C1355 HV | dalu HV | Score | Min | Product |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **0.10** | 0.07504 +/- 0.00849 | 0.01989 +/- 0.01427 | **0.963** | **0.927** | 25.33% |
+| 0.05 | 0.08069 +/- 0.00040 | 0.01465 +/- 0.01622 | 0.866 | 0.737 | 24.76% |
+| disabled | 0.08099 +/- 0.00007 | 0.00886 +/- 0.00836 | 0.723 | 0.446 | 22.96% |
+| 0.50 | 0.07489 +/- 0.00425 | 0.00672 +/- 0.00553 | 0.631 | 0.338 | 24.03% |
+| 0.25 | 0.07489 +/- 0.00419 | 0.00457 +/- 0.00646 | 0.577 | 0.230 | 23.89% |
+
+The floor sweep then fixed epsilon start at `0.10`, warmup at 5, and decay at
+25.
+
+| Epsilon end | C1355 HV | dalu HV | Score | Min | Product |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **0** | 0.07792 +/- 0.00416 | 0.02162 +/- 0.00845 | **0.981** | **0.962** | 23.12% |
+| 0.01 | 0.07504 +/- 0.00849 | 0.01989 +/- 0.01427 | 0.923 | 0.920 | 25.33% |
+| disabled | 0.08099 +/- 0.00007 | 0.00886 +/- 0.00836 | 0.705 | 0.410 | 22.96% |
+| 0.05 | 0.06891 +/- 0.00421 | 0.00225 +/- 0.00318 | 0.477 | 0.104 | 23.21% |
+
+The schedule sweep fixed epsilon at `0.10 -> 0`.
+
+| Warmup, decay | C1355 HV | dalu HV | Score | Min | Product |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **5, 25** | 0.07792 +/- 0.00416 | 0.02162 +/- 0.00845 | **0.981** | **0.962** | 23.12% |
+| 0, 25 | 0.06899 +/- 0.00842 | 0.02109 +/- 0.00349 | 0.914 | 0.852 | 25.08% |
+| 5, 40 | 0.06601 +/- 0.00426 | 0.02000 +/- 0.01446 | 0.870 | 0.815 | 24.19% |
+| 5, 15 | 0.07199 +/- 0.00735 | 0.01441 +/- 0.01220 | 0.778 | 0.666 | 24.35% |
+| disabled | 0.08099 +/- 0.00007 | 0.00886 +/- 0.00836 | 0.705 | 0.410 | 22.96% |
+| 20, 20 | 0.07199 +/- 0.00735 | 0.00909 +/- 0.00327 | 0.655 | 0.420 | 24.45% |
+
+#### Analysis
+
+An initial epsilon of `0.10` was the best compromise. The disabled policy and
+the `0.05` start retained slightly more C1355 hypervolume, but `0.10` was much
+stronger on dalu. Starts of `0.25` and `0.50` were particularly poor on dalu,
+showing that aggressive early randomization is not beneficial at this budget.
+
+Decaying fully to zero was clearly better than retaining an epsilon floor. A
+floor of `0.05` reduced the minimum circuit-relative score to 0.104. With the
+winning start and floor, warmup 5 and decay 25 beat the next schedule by 0.067
+score, well outside the 0.02 tie threshold. Relative to epsilon disabled, the
+winner lost 0.00308 mean HV on C1355 but gained 0.01276 on dalu; its strength is
+cross-circuit robustness rather than universal dominance. Its best observed
+size/depth reductions were 23.41%/34.62% on C1355 and 32.90%/14.29% on dalu.
+
+The optimizer-health caveat remains: this result tunes exploration for the
+pinned descriptive Adam control and does not establish that the underlying
+GFlowNet optimizer is itself optimal.
+
+#### Final decision
+
+Carry `tb.exploration_epsilon_enabled=true`,
+`tb.exploration_epsilon_start=0.10`, `tb.exploration_epsilon_end=0`,
+`tb.exploration_warmup_episodes=5`, and
+`tb.exploration_decay_episodes=25` into confirmation against epsilon disabled.
+Zero is the natural lower boundary for the epsilon floor, so no lower edge
+extension is possible.
+
+### REINFORCE
+
+#### Results
+
+| Entropy beta | C1355 HV | dalu HV | Score | Min | Product |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **0.01** | 0.08033 +/- 0.00014 | 0.03442 +/- 0.00027 | **1.000** | **1.000** | 33.92% |
+| 0.003333 | 0.08003 +/- 0.00050 | 0.03069 +/- 0.00247 | 0.944 | 0.892 | 36.19% |
+| 0.0001 | 0.07713 +/- 0.00449 | 0.02764 +/- 0.00098 | 0.882 | 0.803 | 35.88% |
+| 0.001 | 0.07158 +/- 0.00680 | 0.02905 +/- 0.00205 | 0.868 | 0.844 | 34.55% |
+| 0 | 0.07702 +/- 0.00440 | 0.02300 +/- 0.00256 | 0.814 | 0.668 | 36.63% |
+| 0.03 | 0.06583 +/- 0.00835 | 0.02313 +/- 0.01173 | 0.746 | 0.672 | 27.36% |
+
+#### Analysis
+
+Beta `0.01` achieved the highest mean hypervolume on both circuits, so its
+score and minimum relative score are both 1. It improved mean HV over the
+zero-entropy control by 0.00331 on C1355 and 0.01142 on dalu. The larger `0.03`
+neighbor degraded both reliability and product improvement, while the smaller
+`0.003333` coefficient remained competitive but was 0.056 score behind the
+winner. The winner's best size/depth reductions were 23.41%/34.62% on C1355
+and 26.55%/14.29% on dalu.
+
+#### Final decision
+
+Carry `entropy_beta=0.01` into confirmation against `entropy_beta=0`. The
+winner is bracketed by tested lower and higher values and is not an unresolved
+grid-edge choice.
+
+### PPO
+
+#### Results
+
+| Entropy beta | C1355 HV | dalu HV | Score | Min | Product |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **0.03** | 0.07764 +/- 0.00482 | 0.03517 +/- 0.00314 | **0.985** | **0.969** | 37.40% |
+| 0.003333 | 0.08010 +/- 0.00067 | 0.03202 +/- 0.00019 | 0.955 | 0.910 | 38.01% |
+| 0.01 | 0.07705 +/- 0.00443 | 0.03059 +/- 0.00654 | 0.916 | 0.870 | 37.18% |
+| 0 | 0.07962 +/- 0.00004 | 0.02563 +/- 0.00527 | 0.861 | 0.729 | 36.90% |
+| 0.001 | 0.07982 +/- 0.00027 | 0.02449 +/- 0.00346 | 0.846 | 0.696 | 37.50% |
+| 0.0001 | 0.07959 +/- 0.00000 | 0.02394 +/- 0.00280 | 0.837 | 0.681 | 37.33% |
+
+#### Analysis
+
+Beta `0.03` won by improving dalu substantially. Relative to beta zero it lost
+0.00198 mean HV on C1355 but gained 0.00954 on dalu, increasing the normalized
+two-circuit score by 0.123. Beta `0.003333` had the highest C1355 HV and product
+improvement, but its score was 0.029 below `0.03`, just outside the 0.02
+practical tie band. The winner's best size/depth reductions were
+23.41%/34.62% on C1355 and 25.60%/17.14% on dalu.
+
+Beta `0.03` is the largest tested value. The protocol requires one additional
+neighbor in the winning direction when a selected value is at a grid edge, so
+the present sweep does not yet bracket the PPO optimum.
+
+#### Final decision
+
+The best observed setting is `algorithm.ppo.entropy_beta=0.03`. Do not freeze
+it for the final benchmark yet: first add one declared higher-beta screening
+point, rerun selection, and then confirm the resulting choice against beta
+zero. Until that edge check is complete, `0.03` is the provisional
+confirmation candidate.
+
+### DRiLLS-A2C
+
+#### Results
+
+| Entropy beta | C1355 HV | dalu HV | Score | Min | Product |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **0.0003** | 0.07794 +/- 0.00428 | 0.02422 +/- 0.00527 | **0.972** | **0.943** | 27.44% |
+| 0.0001 | 0.07479 +/- 0.00831 | 0.02206 +/- 0.00433 | 0.909 | 0.859 | 26.03% |
+| 0.00003333 | 0.06298 +/- 0.00729 | 0.02568 +/- 0.00697 | 0.904 | 0.808 | 27.82% |
+| 0.01 | 0.06596 +/- 0.01117 | 0.02164 +/- 0.00398 | 0.844 | 0.843 | 25.12% |
+| 0.001 | 0.06303 +/- 0.00735 | 0.01858 +/- 0.01421 | 0.766 | 0.724 | 27.05% |
+| 0 | 0.07474 +/- 0.00414 | 0.01084 +/- 0.00791 | 0.690 | 0.422 | 26.35% |
+
+#### Analysis
+
+The coarse `1e-4` winner improved further at its upper neighbor `3e-4`.
+Although `3.333e-5` had slightly higher dalu HV and product improvement,
+`3e-4` was much stronger on C1355 and had the best balanced score. Its 0.062
+lead over `1e-4` exceeds the practical tie threshold. Against beta zero it
+gained 0.00321 mean HV on C1355 and 0.01339 on dalu. Its best size/depth
+reductions were 23.41%/34.62% on C1355 and 30.93%/14.29% on dalu.
+
+#### Final decision
+
+Carry `algorithm.drills.entropy_beta=0.0003` into confirmation against beta
+zero. The winner lies between tested `1e-4` and `1e-3` values and therefore is
+adequately bracketed.
+
+### PCN
+
+#### Results
+
+With fallback noise disabled, the seed-count comparison was:
+
+| Random seed episodes | C1355 HV | dalu HV | Score | Min | Product |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **64** | 0.02406 +/- 0.01576 | 0.00245 +/- 0.00346 | **0.901** | **0.802** | 10.50% |
+| 32 | 0.03002 +/- 0.02122 | 0.00000 +/- 0.00000 | 0.500 | 0.000 | 20.58% |
+| 16 | 0.00682 +/- 0.00943 | 0.00000 +/- 0.00000 | 0.114 | 0.000 | 10.87% |
+
+At 64 seed episodes, the fallback-noise comparison was:
+
+| Noise scale, minimum sigma | C1355 HV | dalu HV | Score | Min | Product |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **0.10, 0.01** | 0.02406 +/- 0.01576 | 0.00245 +/- 0.00346 | **1.000** | **1.000** | 11.79% |
+| 0, 0 | 0.02406 +/- 0.01576 | 0.00245 +/- 0.00346 | 1.000 | 1.000 | 10.50% |
+| 0.01, 0.01 | 0.02106 +/- 0.01186 | 0.00245 +/- 0.00346 | 0.938 | 0.875 | 15.38% |
+| 0.05, 0.01 | 0.02096 +/- 0.01173 | 0.00000 +/- 0.00000 | 0.436 | 0.000 | 7.18% |
+
+The top-two-by-top-two interaction check produced:
+
+| Seed episodes; noise scale, sigma | C1355 HV | dalu HV | Score | Min | Product |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| **64; 0.10, 0.01** | 0.02406 +/- 0.01576 | 0.00245 +/- 0.00346 | **0.901** | **0.802** | 11.79% |
+| 64; 0, 0 | 0.02406 +/- 0.01576 | 0.00245 +/- 0.00346 | 0.901 | 0.802 | 10.50% |
+| 32; 0, 0 | 0.03002 +/- 0.02122 | 0.00000 +/- 0.00000 | 0.500 | 0.000 | 20.58% |
+| 32; 0.10, 0.01 | 0.01938 +/- 0.01813 | 0.00000 +/- 0.00000 | 0.323 | 0.000 | 15.24% |
+
+#### Analysis
+
+Sixty-four seed episodes were selected because they were the only seed-count
+setting to achieve positive mean hypervolume on dalu. The 32-seed control had
+higher C1355 HV and product improvement but a zero minimum circuit score.
+
+At 64 seeds, scale `0.10` and no fallback noise had identical per-circuit HV,
+selection score, and minimum score. The declared tie-break therefore moved to
+mean product improvement, where `0.10` scored 11.79% versus 10.50%; this is the
+sole basis for choosing fallback noise. The interaction check also shows that
+scale `0.10` is harmful at 32 seeds, so the noise decision must not be detached
+from the selected seed count. The selected configuration's best size/depth
+reductions were 23.41%/19.23% on C1355 and 20.20%/5.71% on dalu.
+
+Both 64 seed episodes and noise scale `0.10` are upper boundaries of their
+tested grids. Under the protocol's edge rule, the PCN optimum is not yet
+bracketed and the exact-HV tie makes the evidence for fallback noise weak.
+
+#### Final decision
+
+The best observed joint setting is `pcn.random_seed_episodes=64`,
+`pcn.target_noise_scale=0.10`, and `pcn.target_min_sigma=0.01`. Treat it as
+provisional: declare and test one adjacent higher seed count and one adjacent
+higher noise scale before confirmation. After that edge check, compare the
+resulting selection against the explicit control of 32 seed episodes with
+scale and minimum sigma both zero, using PCN `target` sampling mode throughout.
+
+### Confirmation gate
+
+The completed screens nominate GFlowNet `0.10 -> 0` with schedule `(5,25)`,
+REINFORCE beta `0.01`, PPO beta `0.03`, DRiLLS-A2C beta `0.0003`, and PCN
+`(64,0.10,0.01)`. GFlowNet, REINFORCE, and DRiLLS-A2C are ready for the
+predeclared ten-seed confirmation. PPO and PCN require their grid-edge checks
+first. None of these settings should be described as a confirmed final winner
+until its 800-trajectory paired comparison and deterministic bootstrap report
+have completed.
