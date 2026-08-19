@@ -137,7 +137,7 @@ Consequently, future reports should always include both:
 
 ## 2. Budget differences in the experimental setup and how to fix them
 
-### 2.1 Training trajectory budget
+### 2.1 Training trajectory budget [DONE]
 
 All current configurations specify 200 episodes, but an episode does not represent the same amount of data for the two algorithms.
 
