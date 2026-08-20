@@ -1,0 +1,160 @@
+version: 1
+campaign: baseline-ppo-epoch-clip-interactions-v1
+
+common:
+  num_steps: 20
+  available_actions: [0, 1, 2, 3, 4, 5, 6]
+  evaluation_seed: 42
+  evaluation_samples: 50
+  discovery_emit_every_trajectories: 50
+  hypervolume_reference: [1.0, 1.0]
+  practical_tie_threshold: 0.02
+  plateau_relative_tolerance: 0.02
+  bootstrap_repetitions: 10000
+  bootstrap_seed: 20260820
+  screen_training_trajectories: 800
+  budget_grid: [200, 400, 800, 1600, 3200]
+  conditional_extension_trajectory: 6400
+  screen_seeds: [0, 1, 2]
+  confirmation_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+circuits:
+  C1355:
+    role: smaller_structured_logic
+    dataset_cfg: cfg/data/zhu2020/C1355.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/C1355.blif
+  dalu:
+    role: medium_alu_datapath
+    dataset_cfg: cfg/data/zhu2020/dalu.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/dalu.blif
+
+algorithms:
+  ppo:
+    report_algorithm: ppo
+    base_config: ppo_zhuDOP
+    trajectories_per_episode: 4
+    frozen_exploration:
+      source: mds/exploration_tuning.md
+      status: user_accepted_provisional_grid_edge_winner
+      algorithm.ppo.entropy_beta: 0.03
+    fixed_overrides:
+      algorithm.ppo.entropy_beta: 0.03
+      algorithm.ppo.rollout_steps: 80
+      baseline: zhu_resyn2
+      baseline_scale: 1.0
+    profiles:
+      - id: control
+        control: true
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.ppo.ppo_epochs: 20
+          algorithm.ppo.minibatch_size: 64
+          algorithm.ppo.clip_eps: 0.2
+          algorithm.ppo.value_loss_coef: 0.5
+          algorithm.ppo.normalize_advantages: true
+          algorithm.ppo.clip_grad_norm: null
+          algorithm.ppo.gae_lambda: 0.95
+      - id: epochs_low
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.ppo.ppo_epochs: 10
+          algorithm.ppo.minibatch_size: 64
+          algorithm.ppo.clip_eps: 0.2
+          algorithm.ppo.value_loss_coef: 0.5
+          algorithm.ppo.normalize_advantages: true
+          algorithm.ppo.clip_grad_norm: null
+          algorithm.ppo.gae_lambda: 0.95
+      - id: epochs_high
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.ppo.ppo_epochs: 40
+          algorithm.ppo.minibatch_size: 64
+          algorithm.ppo.clip_eps: 0.2
+          algorithm.ppo.value_loss_coef: 0.5
+          algorithm.ppo.normalize_advantages: true
+          algorithm.ppo.clip_grad_norm: null
+          algorithm.ppo.gae_lambda: 0.95
+      - id: clip_low
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.ppo.ppo_epochs: 20
+          algorithm.ppo.minibatch_size: 64
+          algorithm.ppo.clip_eps: 0.1
+          algorithm.ppo.value_loss_coef: 0.5
+          algorithm.ppo.normalize_advantages: true
+          algorithm.ppo.clip_grad_norm: null
+          algorithm.ppo.gae_lambda: 0.95
+      - id: epochs_low_clip_low
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.ppo.ppo_epochs: 10
+          algorithm.ppo.minibatch_size: 64
+          algorithm.ppo.clip_eps: 0.1
+          algorithm.ppo.value_loss_coef: 0.5
+          algorithm.ppo.normalize_advantages: true
+          algorithm.ppo.clip_grad_norm: null
+          algorithm.ppo.gae_lambda: 0.95
+      - id: epochs_high_clip_low
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.ppo.ppo_epochs: 40
+          algorithm.ppo.minibatch_size: 64
+          algorithm.ppo.clip_eps: 0.1
+          algorithm.ppo.value_loss_coef: 0.5
+          algorithm.ppo.normalize_advantages: true
+          algorithm.ppo.clip_grad_norm: null
+          algorithm.ppo.gae_lambda: 0.95
+
+stages:
+  screen_ppo_epoch_clip_interactions:
+    kind: screen
+    algorithm: ppo
+    dependencies: []
+    circuits: [C1355, dalu]
+    interaction_profiles: [epochs_low_clip_low, epochs_high_clip_low]
+    paired_contrasts:
+      - id: low_epoch_clip_interaction
+        kind: difference_of_differences
+        terms:
+          epochs_low_clip_low: 1
+          epochs_low: -1
+          clip_low: -1
+          control: 1
+      - id: high_epoch_clip_interaction
+        kind: difference_of_differences
+        terms:
+          epochs_high_clip_low: 1
+          epochs_high: -1
+          clip_low: -1
+          control: 1
+      - id: epochs_low_clip_low_minus_epochs_low
+        kind: direct_parent_comparison
+        terms:
+          epochs_low_clip_low: 1
+          epochs_low: -1
+      - id: epochs_low_clip_low_minus_clip_low
+        kind: direct_parent_comparison
+        terms:
+          epochs_low_clip_low: 1
+          clip_low: -1
+      - id: epochs_high_clip_low_minus_epochs_high
+        kind: direct_parent_comparison
+        terms:
+          epochs_high_clip_low: 1
+          epochs_high: -1
+      - id: epochs_high_clip_low_minus_clip_low
+        kind: direct_parent_comparison
+        terms:
+          epochs_high_clip_low: 1
+          clip_low: -1
+
+martin:
+  artifact_base: /shared/home/fedor.chernogorskii/agent/art/gflowcircuit
+  job_names:
+    screen_ppo_epoch_clip_interactions: gfc-base-ppo-epoch-clip-v1

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from dataclasses import asdict, dataclass, field
 from itertools import product
@@ -198,6 +199,74 @@ class BaselineTuningProtocol:
             algorithm = cfg.get("algorithm")
             if algorithm is not None and algorithm not in self.algorithms:
                 raise ProtocolError(f"stage {stage} has unknown algorithm {algorithm}")
+            profile_ids = (
+                {
+                    str(profile["id"])
+                    for profile in self.algorithms[str(algorithm)]["profiles"]
+                }
+                if algorithm is not None
+                else set()
+            )
+            raw_stage_interactions = cfg.get("interaction_profiles", [])
+            if not isinstance(raw_stage_interactions, list):
+                raise ProtocolError(f"stage {stage} interaction_profiles must be a list")
+            stage_interactions = {str(value) for value in raw_stage_interactions}
+            if stage_interactions:
+                if cfg.get("kind") != "screen" or algorithm is None:
+                    raise ProtocolError(
+                        f"stage {stage} interaction_profiles requires a screen algorithm"
+                    )
+                if not stage_interactions <= profile_ids:
+                    raise ProtocolError(
+                        f"stage {stage} interaction_profiles contains an unknown profile"
+                    )
+            paired_contrasts = cfg.get("paired_contrasts", [])
+            if not isinstance(paired_contrasts, list):
+                raise ProtocolError(f"stage {stage} paired_contrasts must be a list")
+            if paired_contrasts:
+                if cfg.get("kind") != "screen" or algorithm is None:
+                    raise ProtocolError(
+                        f"stage {stage} paired_contrasts requires a screen algorithm"
+                    )
+                if any(not isinstance(value, Mapping) for value in paired_contrasts):
+                    raise ProtocolError(
+                        f"stage {stage} paired_contrasts entries must be mappings"
+                    )
+                contrast_ids = [str(value.get("id", "")) for value in paired_contrasts]
+                if (
+                    any(not value or _safe(value) != value for value in contrast_ids)
+                    or len(contrast_ids) != len(set(contrast_ids))
+                ):
+                    raise ProtocolError(
+                        f"stage {stage} paired contrast ids must be unique and safe"
+                    )
+                for contrast in paired_contrasts:
+                    terms = contrast.get("terms", {})
+                    if not isinstance(terms, Mapping) or len(terms) < 2:
+                        raise ProtocolError(
+                            f"stage {stage} contrast {contrast['id']} requires at least two terms"
+                        )
+                    if not set(terms) <= profile_ids:
+                        raise ProtocolError(
+                            f"stage {stage} contrast {contrast['id']} contains an unknown profile"
+                        )
+                    weights = list(terms.values())
+                    if any(
+                        isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not math.isfinite(float(value))
+                        or float(value) == 0.0
+                        for value in weights
+                    ):
+                        raise ProtocolError(
+                            f"stage {stage} contrast {contrast['id']} has an invalid weight"
+                        )
+                    if not math.isclose(
+                        sum(float(value) for value in weights), 0.0, abs_tol=1e-12
+                    ):
+                        raise ProtocolError(
+                            f"stage {stage} contrast {contrast['id']} weights must sum to zero"
+                        )
             factorial = cfg.get("factorial")
             if factorial is not None:
                 if cfg.get("kind") != "screen" or algorithm is None:
@@ -210,9 +279,6 @@ class BaselineTuningProtocol:
                 raw_cells = factorial.get("cells", {})
                 if not isinstance(raw_cells, Mapping):
                     raise ProtocolError(f"stage {stage} factorial cells must be a mapping")
-                profile_ids = {
-                    str(profile["id"]) for profile in self.algorithms[str(algorithm)]["profiles"]
-                }
                 if set(raw_cells) != profile_ids:
                     raise ProtocolError(
                         f"stage {stage} factorial cells must map exactly all algorithm profiles"

@@ -153,8 +153,10 @@ def select_screen(
         "settings": [setting.to_dict() for setting in settings],
     }
     factorial = cfg.get("factorial")
+    interaction_profiles = [str(value) for value in cfg.get("interaction_profiles", [])]
     if factorial is not None:
         interaction_profiles = [str(value) for value in factorial["interaction_profiles"]]
+    if interaction_profiles:
         interaction_in_top_two = [
             str(value) for value in selection["top_profiles"] if value in interaction_profiles
         ]
@@ -250,6 +252,7 @@ def factorial_contrasts(
             rows.append(
                 {
                     "contrast_id": "__x__".join(selected_factors),
+                    "contrast_type": "factorial_effect",
                     "factors": "|".join(selected_factors),
                     "order": order,
                     "mean_effect": _mean(effects),
@@ -260,6 +263,89 @@ def factorial_contrasts(
                 }
             )
             contrast_index += 1
+    return rows
+
+
+def paired_profile_contrasts(
+    protocol: BaselineTuningProtocol,
+    stage: str,
+    summary_rows: list[dict[str, Any]],
+    seed_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Evaluate declared paired profile contrasts on circuit-normalized HV."""
+    cfg = protocol.stages[stage]
+    declared = cfg.get("paired_contrasts", [])
+    if not declared:
+        return []
+    algorithm = str(cfg["algorithm"])
+    circuits = [str(value) for value in cfg["circuits"]]
+    relevant_summaries = [
+        row
+        for row in summary_rows
+        if str(row["algorithm"]) == algorithm and str(row["circuit"]) in circuits
+    ]
+    maxima = {
+        circuit: max(
+            float(row["mean_hypervolume"])
+            for row in relevant_summaries
+            if str(row["circuit"]) == circuit
+        )
+        for circuit in circuits
+    }
+    profiles = {
+        str(profile)
+        for contrast in declared
+        for profile in contrast["terms"]
+    }
+    blocks: dict[tuple[str, int], dict[str, float]] = defaultdict(dict)
+    for row in seed_rows:
+        if str(row["algorithm"]) != algorithm or str(row["circuit"]) not in circuits:
+            continue
+        profile = str(row["profile_id"])
+        if profile not in profiles:
+            continue
+        circuit = str(row["circuit"])
+        scale = maxima[circuit]
+        normalized = 1.0 if scale == 0.0 else float(row["hypervolume"]) / scale
+        blocks[(circuit, int(row["seed"]))][profile] = normalized
+    expected_blocks = len(circuits) * len(protocol.data["common"]["screen_seeds"])
+    if len(blocks) != expected_blocks:
+        raise ValueError(
+            f"paired contrasts require {expected_blocks} paired blocks, found {len(blocks)}"
+        )
+
+    rows: list[dict[str, Any]] = []
+    for contrast_index, declared_contrast in enumerate(declared):
+        terms = {
+            str(profile): float(weight)
+            for profile, weight in declared_contrast["terms"].items()
+        }
+        effects = []
+        for block, values in blocks.items():
+            if not set(terms) <= set(values):
+                raise ValueError(
+                    f"incomplete paired contrast {declared_contrast['id']} for {algorithm}/{block}"
+                )
+            effects.append(sum(weight * values[profile] for profile, weight in terms.items()))
+        low, high = bootstrap_mean_ci(
+            effects,
+            repetitions=int(protocol.data["common"]["bootstrap_repetitions"]),
+            seed=int(protocol.data["common"]["bootstrap_seed"]) + 100 + contrast_index,
+        )
+        rows.append(
+            {
+                "contrast_id": str(declared_contrast["id"]),
+                "contrast_type": str(declared_contrast.get("kind", "declared")),
+                "terms": "|".join(
+                    f"{profile}:{weight:g}" for profile, weight in terms.items()
+                ),
+                "mean_effect": _mean(effects),
+                "ci95_low": low,
+                "ci95_high": high,
+                "paired_blocks": len(effects),
+                "metric": "circuit_normalized_sampled_hypervolume",
+            }
+        )
     return rows
 
 
@@ -552,11 +638,13 @@ def analyze_stage(
         "protocol_hash": protocol.protocol_hash,
         "algorithms": selections,
     }
-    interaction_rows = factorial_contrasts(protocol, stage, summary_rows, seed_rows)
+    factorial_rows = factorial_contrasts(protocol, stage, summary_rows, seed_rows)
+    paired_rows = paired_profile_contrasts(protocol, stage, summary_rows, seed_rows)
+    interaction_rows = [*factorial_rows, *paired_rows]
     if interaction_rows:
         algorithm = str(protocol.stages[stage]["algorithm"])
-        selections[algorithm]["factorial_contrasts"] = interaction_rows
-        payload["factorial_contrasts"] = interaction_rows
+        selections[algorithm]["interaction_contrasts"] = interaction_rows
+        payload["interaction_contrasts"] = interaction_rows
     _write_csv(artifact_root / "per_seed_metrics.csv", seed_rows)
     _write_csv(artifact_root / "setting_summary.csv", summary_rows)
     _write_csv(artifact_root / "pooled_front.csv", pooled_rows)
@@ -606,6 +694,7 @@ __all__ = [
     "confirm_selection",
     "enriched_seed_metrics",
     "factorial_contrasts",
+    "paired_profile_contrasts",
     "select_budget",
     "select_screen",
 ]

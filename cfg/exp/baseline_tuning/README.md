@@ -17,6 +17,11 @@ two-way, and three-way effects on circuit-normalized sampled hypervolume.
 Positive effects favor enabling the named factor combination; interaction
 effects use recursive differences of the corresponding lower-order effects.
 
+`ppo_epoch_clip_interactions.yaml` is a separate six-cell follow-up crossing
+PPO epoch counts 10, 20, and 40 with clipping epsilons 0.2 and 0.1. It declares
+paired difference-of-differences and direct parent comparisons, which are
+written to the same `interaction_contrasts.csv` output.
+
 ## Locked decisions
 
 - Circuits: `C1355` (smaller structured logic) and `dalu` (medium ALU/datapath).
@@ -71,6 +76,14 @@ Validate the interaction matrix independently with:
 python -m src.baseline_tuning \
   --protocol cfg/exp/baseline_tuning/drills_interactions.yaml \
   validate --stage screen_drills_interactions --skip-compose
+```
+
+Validate the PPO epoch/clipping matrix with:
+
+```bash
+python -m src.baseline_tuning \
+  --protocol cfg/exp/baseline_tuning/ppo_epoch_clip_interactions.yaml \
+  validate --stage screen_ppo_epoch_clip_interactions --skip-compose
 ```
 
 The Martin jobs use the full validation path and abort if Hydra composition,

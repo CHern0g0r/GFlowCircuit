@@ -3,11 +3,18 @@ from __future__ import annotations
 from copy import deepcopy
 from unittest import TestCase
 
-from src.baseline_tuning_analysis import confirm_selection, factorial_contrasts, select_budget
+from src.baseline_tuning_analysis import (
+    confirm_selection,
+    factorial_contrasts,
+    paired_profile_contrasts,
+    select_budget,
+    select_screen,
+)
 from src.baseline_tuning_protocol import BaselineTuningProtocol, ProtocolError
 
 
 INTERACTION_PROTOCOL = "cfg/exp/baseline_tuning/drills_interactions.yaml"
+PPO_INTERACTION_PROTOCOL = "cfg/exp/baseline_tuning/ppo_epoch_clip_interactions.yaml"
 
 
 def _summary(algorithm: str, profile: str, budget: int, circuit: str, hv: float) -> dict:
@@ -159,6 +166,116 @@ def test_factorial_contrast_signs() -> None:
         < 0.0
     )
     assert all(row["paired_blocks"] == 6 for row in contrasts.values())
+
+
+def test_ppo_interaction_protocol_matrix() -> None:
+    protocol = BaselineTuningProtocol.load(PPO_INTERACTION_PROTOCOL)
+    stage = "screen_ppo_epoch_clip_interactions"
+    settings = protocol.settings_for_stage(stage)
+    tasks = protocol.build_tasks(stage, settings)
+    assert len(settings) == 6
+    assert len(tasks) == 36
+    assert len({task.task_id for task in tasks}) == 36
+    assert {task.training_trajectories for task in tasks} == {800}
+    assert {task.episodes for task in tasks} == {200}
+    assert {task.evaluation_samples for task in tasks} == {50}
+    assert {task.circuit for task in tasks} == {"C1355", "dalu"}
+    assert {task.seed for task in tasks} == {0, 1, 2}
+
+
+def test_ppo_paired_contrast_signs() -> None:
+    protocol = BaselineTuningProtocol.load(PPO_INTERACTION_PROTOCOL)
+    stage = "screen_ppo_epoch_clip_interactions"
+    values = {
+        "control": 1.0,
+        "epochs_low": 2.0,
+        "epochs_high": 4.0,
+        "clip_low": 3.0,
+        "epochs_low_clip_low": 5.0,
+        "epochs_high_clip_low": 5.0,
+    }
+    summary_rows = []
+    seed_rows = []
+    for circuit in ("C1355", "dalu"):
+        for profile, value in values.items():
+            summary_rows.append(
+                {
+                    "algorithm": "ppo",
+                    "profile_id": profile,
+                    "training_trajectories": 800,
+                    "circuit": circuit,
+                    "mean_hypervolume": value,
+                    "mean_product_improvement": value,
+                }
+            )
+            for seed in (0, 1, 2):
+                seed_rows.append(
+                    {
+                        "algorithm": "ppo",
+                        "profile_id": profile,
+                        "training_trajectories": 800,
+                        "circuit": circuit,
+                        "seed": seed,
+                        "hypervolume": value,
+                        "role": "screen",
+                    }
+                )
+    contrasts = {
+        row["contrast_id"]: row
+        for row in paired_profile_contrasts(protocol, stage, summary_rows, seed_rows)
+    }
+    assert len(contrasts) == 6
+    assert contrasts["low_epoch_clip_interaction"]["mean_effect"] > 0.0
+    assert contrasts["high_epoch_clip_interaction"]["mean_effect"] < 0.0
+    assert contrasts["epochs_low_clip_low_minus_epochs_low"]["mean_effect"] > 0.0
+    assert all(row["paired_blocks"] == 6 for row in contrasts.values())
+    selection = select_screen(
+        protocol,
+        stage,
+        protocol.settings_for_stage(stage),
+        summary_rows,
+    )["ppo"]
+    assert set(selection["interaction_in_top_two"]) == set(selection["top_profiles"])
+    assert selection["next_action"] == "run_new_budget_curve"
+
+
+def test_ppo_protocol_rejects_invalid_contrasts() -> None:
+    mutations = []
+
+    def unknown_profile(data: dict) -> None:
+        contrast = data["stages"]["screen_ppo_epoch_clip_interactions"][
+            "paired_contrasts"
+        ][0]
+        contrast["terms"]["missing"] = contrast["terms"].pop("control")
+
+    mutations.append(unknown_profile)
+
+    def nonzero_sum(data: dict) -> None:
+        contrast = data["stages"]["screen_ppo_epoch_clip_interactions"][
+            "paired_contrasts"
+        ][0]
+        contrast["terms"]["control"] = 2
+
+    mutations.append(nonzero_sum)
+
+    def duplicate_id(data: dict) -> None:
+        contrasts = data["stages"]["screen_ppo_epoch_clip_interactions"][
+            "paired_contrasts"
+        ]
+        contrasts[1]["id"] = contrasts[0]["id"]
+
+    mutations.append(duplicate_id)
+
+    for mutation in mutations:
+        protocol = BaselineTuningProtocol.load(PPO_INTERACTION_PROTOCOL)
+        protocol.data = deepcopy(protocol.data)
+        mutation(protocol.data)
+        try:
+            protocol.validate_structure()
+        except ProtocolError:
+            pass
+        else:
+            raise AssertionError("invalid paired contrast metadata was accepted")
 
 
 def test_conditional_extension_confirmation_and_common_budget() -> None:
@@ -334,6 +451,15 @@ class BaselineTuningTest(TestCase):
 
     def test_factorial_effects(self) -> None:
         test_factorial_contrast_signs()
+
+    def test_ppo_interaction_matrix(self) -> None:
+        test_ppo_interaction_protocol_matrix()
+
+    def test_ppo_interaction_effects(self) -> None:
+        test_ppo_paired_contrast_signs()
+
+    def test_invalid_ppo_contrasts(self) -> None:
+        test_ppo_protocol_rejects_invalid_contrasts()
 
     def test_conditional_stages(self) -> None:
         test_conditional_extension_confirmation_and_common_budget()
