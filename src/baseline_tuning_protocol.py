@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict, dataclass, field
+from itertools import product
 from pathlib import Path
 from statistics import median
 from typing import Any, Iterable, Mapping
@@ -197,6 +198,52 @@ class BaselineTuningProtocol:
             algorithm = cfg.get("algorithm")
             if algorithm is not None and algorithm not in self.algorithms:
                 raise ProtocolError(f"stage {stage} has unknown algorithm {algorithm}")
+            factorial = cfg.get("factorial")
+            if factorial is not None:
+                if cfg.get("kind") != "screen" or algorithm is None:
+                    raise ProtocolError(
+                        f"stage {stage} factorial metadata requires a screen algorithm"
+                    )
+                factors = [str(value) for value in factorial.get("factors", [])]
+                if len(factors) < 2 or len(factors) != len(set(factors)):
+                    raise ProtocolError(f"stage {stage} factorial factors must be unique")
+                raw_cells = factorial.get("cells", {})
+                if not isinstance(raw_cells, Mapping):
+                    raise ProtocolError(f"stage {stage} factorial cells must be a mapping")
+                profile_ids = {
+                    str(profile["id"]) for profile in self.algorithms[str(algorithm)]["profiles"]
+                }
+                if set(raw_cells) != profile_ids:
+                    raise ProtocolError(
+                        f"stage {stage} factorial cells must map exactly all algorithm profiles"
+                    )
+                cells: list[tuple[int, ...]] = []
+                for profile_id, raw_cell in raw_cells.items():
+                    if not isinstance(raw_cell, list) or len(raw_cell) != len(factors):
+                        raise ProtocolError(
+                            f"stage {stage} factorial cell {profile_id} has the wrong dimension"
+                        )
+                    if any(value not in {0, 1} for value in raw_cell):
+                        raise ProtocolError(
+                            f"stage {stage} factorial cell {profile_id} must contain only 0/1"
+                        )
+                    cell = tuple(int(value) for value in raw_cell)
+                    cells.append(cell)
+                expected_cells = set(product((0, 1), repeat=len(factors)))
+                if set(cells) != expected_cells or len(cells) != len(expected_cells):
+                    raise ProtocolError(
+                        f"stage {stage} factorial cells are incomplete or duplicated"
+                    )
+                interactions = {str(value) for value in factorial.get("interaction_profiles", [])}
+                expected_interactions = {
+                    str(profile_id)
+                    for profile_id, cell in raw_cells.items()
+                    if sum(cell) >= 2
+                }
+                if interactions != expected_interactions:
+                    raise ProtocolError(
+                        f"stage {stage} interaction_profiles must identify all interaction cells"
+                    )
         jobs = self.data["martin"]["job_names"]
         if set(jobs) != set(self.stages):
             raise ProtocolError("martin.job_names must contain exactly all stages")

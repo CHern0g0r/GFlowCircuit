@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 from collections import defaultdict
+from itertools import combinations
 from pathlib import Path
 from statistics import fmean
 from typing import Any, Iterable, Mapping
@@ -143,16 +144,123 @@ def select_screen(
     )
     if len(ranked) < 2:
         raise ValueError(f"{algorithm} screen produced fewer than two profiles")
+    selection = {
+        "status": "screened",
+        "selected_profile": ranked[0]["profile_id"],
+        "runner_up_profile": ranked[1]["profile_id"],
+        "top_profiles": [ranked[0]["profile_id"], ranked[1]["profile_id"]],
+        "rankings": ranked,
+        "settings": [setting.to_dict() for setting in settings],
+    }
+    factorial = cfg.get("factorial")
+    if factorial is not None:
+        interaction_profiles = [str(value) for value in factorial["interaction_profiles"]]
+        interaction_in_top_two = [
+            str(value) for value in selection["top_profiles"] if value in interaction_profiles
+        ]
+        selection.update(
+            {
+                "interaction_profiles": interaction_profiles,
+                "interaction_in_top_two": interaction_in_top_two,
+                "next_action": (
+                    "run_new_budget_curve"
+                    if interaction_in_top_two
+                    else "continue_existing_confirmation_path"
+                ),
+            }
+        )
     return {
         algorithm: {
-            "status": "screened",
-            "selected_profile": ranked[0]["profile_id"],
-            "runner_up_profile": ranked[1]["profile_id"],
-            "top_profiles": [ranked[0]["profile_id"], ranked[1]["profile_id"]],
-            "rankings": ranked,
-            "settings": [setting.to_dict() for setting in settings],
+            **selection,
         }
     }
+
+
+def factorial_contrasts(
+    protocol: BaselineTuningProtocol,
+    stage: str,
+    summary_rows: list[dict[str, Any]],
+    seed_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Compute paired factorial effects on circuit-normalized sampled HV."""
+    cfg = protocol.stages[stage]
+    factorial = cfg.get("factorial")
+    if factorial is None:
+        return []
+    algorithm = str(cfg["algorithm"])
+    factors = [str(value) for value in factorial["factors"]]
+    cells = {
+        str(profile): tuple(int(value) for value in raw_cell)
+        for profile, raw_cell in factorial["cells"].items()
+    }
+    circuits = [str(value) for value in cfg["circuits"]]
+    relevant_summaries = [
+        row for row in summary_rows
+        if str(row["algorithm"]) == algorithm and str(row["circuit"]) in circuits
+    ]
+    maxima = {
+        circuit: max(
+            float(row["mean_hypervolume"])
+            for row in relevant_summaries
+            if str(row["circuit"]) == circuit
+        )
+        for circuit in circuits
+    }
+    blocks: dict[tuple[str, int], dict[str, float]] = defaultdict(dict)
+    for row in seed_rows:
+        if str(row["algorithm"]) != algorithm or str(row["circuit"]) not in circuits:
+            continue
+        profile = str(row["profile_id"])
+        if profile not in cells:
+            continue
+        circuit = str(row["circuit"])
+        scale = maxima[circuit]
+        normalized = 1.0 if scale == 0.0 else float(row["hypervolume"]) / scale
+        blocks[(circuit, int(row["seed"]))][profile] = normalized
+    expected_profiles = set(cells)
+    for block, values in blocks.items():
+        if set(values) != expected_profiles:
+            raise ValueError(f"incomplete factorial block for {algorithm}/{block}")
+    expected_blocks = len(circuits) * len(protocol.data["common"]["screen_seeds"])
+    if len(blocks) != expected_blocks:
+        raise ValueError(
+            f"factorial screen requires {expected_blocks} paired blocks, found {len(blocks)}"
+        )
+
+    rows: list[dict[str, Any]] = []
+    contrast_index = 0
+    for order in range(1, len(factors) + 1):
+        for factor_indices in combinations(range(len(factors)), order):
+            effects = []
+            denominator = float(2 ** (len(factors) - order))
+            for values in blocks.values():
+                contrast = 0.0
+                for profile, cell in cells.items():
+                    sign = 1.0
+                    for index in factor_indices:
+                        sign *= 1.0 if cell[index] else -1.0
+                    contrast += sign * values[profile]
+                effects.append(contrast / denominator)
+            low, high = bootstrap_mean_ci(
+                effects,
+                repetitions=int(protocol.data["common"]["bootstrap_repetitions"]),
+                seed=int(protocol.data["common"]["bootstrap_seed"]) + contrast_index,
+            )
+            selected_factors = [factors[index] for index in factor_indices]
+            rows.append(
+                {
+                    "contrast_id": "__x__".join(selected_factors),
+                    "factors": "|".join(selected_factors),
+                    "order": order,
+                    "mean_effect": _mean(effects),
+                    "ci95_low": low,
+                    "ci95_high": high,
+                    "paired_blocks": len(effects),
+                    "metric": "circuit_normalized_sampled_hypervolume",
+                }
+            )
+            contrast_index += 1
+    return rows
 
 
 def _normalized_pair_differences(
@@ -444,10 +552,17 @@ def analyze_stage(
         "protocol_hash": protocol.protocol_hash,
         "algorithms": selections,
     }
+    interaction_rows = factorial_contrasts(protocol, stage, summary_rows, seed_rows)
+    if interaction_rows:
+        algorithm = str(protocol.stages[stage]["algorithm"])
+        selections[algorithm]["factorial_contrasts"] = interaction_rows
+        payload["factorial_contrasts"] = interaction_rows
     _write_csv(artifact_root / "per_seed_metrics.csv", seed_rows)
     _write_csv(artifact_root / "setting_summary.csv", summary_rows)
     _write_csv(artifact_root / "pooled_front.csv", pooled_rows)
     _write_csv(artifact_root / "discovery_curves.csv", discovery_curve_rows(records))
+    if interaction_rows:
+        _write_csv(artifact_root / "interaction_contrasts.csv", interaction_rows)
     (artifact_root / "selection.json").write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
@@ -473,7 +588,8 @@ def analyze_stage(
             "",
             (
                 "Review `setting_summary.csv`, `per_seed_metrics.csv`, "
-                "`pooled_front.csv`, and `selection.json` before advancing."
+                "`pooled_front.csv`, `interaction_contrasts.csv` when present, "
+                "and `selection.json` before advancing."
             ),
             (
                 "Reports include optimizer-update counts, wall time, and GPU-hours "
@@ -489,6 +605,7 @@ __all__ = [
     "analyze_stage",
     "confirm_selection",
     "enriched_seed_metrics",
+    "factorial_contrasts",
     "select_budget",
     "select_screen",
 ]

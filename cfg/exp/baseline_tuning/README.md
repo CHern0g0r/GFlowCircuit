@@ -9,6 +9,14 @@ The canonical specification is `protocol.yaml`; the executable interface is
 exactly 50 times with evaluation seed 42. Training seed is the statistical
 unit, and the same circuit/seed pairs are used for every comparison.
 
+`drills_interactions.yaml` is a separate, self-contained follow-up campaign.
+It leaves the completed canonical campaign and its protocol hash unchanged,
+and reruns the complete eight-cell DRiLLS factorial at 800 trajectories. Its
+screen report also writes `interaction_contrasts.csv` with paired main,
+two-way, and three-way effects on circuit-normalized sampled hypervolume.
+Positive effects favor enabling the named factor combination; interaction
+effects use recursive differences of the corresponding lower-order effects.
+
 ## Locked decisions
 
 - Circuits: `C1355` (smaller structured logic) and `dalu` (medium ALU/datapath).
@@ -57,6 +65,14 @@ Protocol-only validation works without the training environment:
 python -m src.baseline_tuning validate --stage smoke --skip-compose
 ```
 
+Validate the interaction matrix independently with:
+
+```bash
+python -m src.baseline_tuning \
+  --protocol cfg/exp/baseline_tuning/drills_interactions.yaml \
+  validate --stage screen_drills_interactions --skip-compose
+```
+
 The Martin jobs use the full validation path and abort if Hydra composition,
 resolved overrides, checkpoints, reports, or exact sample counts differ:
 
@@ -72,4 +88,3 @@ python -m src.baseline_tuning run-stage \
 Each task writes into an immutable `attempt_NNN` directory. Completed tasks are
 validated and reused; failed or invalid attempts are never overwritten.
 `selection.json` is the machine-readable gate for the next stage.
-

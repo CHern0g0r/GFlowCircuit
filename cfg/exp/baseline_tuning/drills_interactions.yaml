@@ -1,0 +1,130 @@
+version: 1
+campaign: baseline-drills-interactions-v1
+
+common:
+  num_steps: 20
+  available_actions: [0, 1, 2, 3, 4, 5, 6]
+  evaluation_seed: 42
+  evaluation_samples: 50
+  discovery_emit_every_trajectories: 50
+  hypervolume_reference: [1.0, 1.0]
+  practical_tie_threshold: 0.02
+  plateau_relative_tolerance: 0.02
+  bootstrap_repetitions: 10000
+  bootstrap_seed: 20260819
+  screen_training_trajectories: 800
+  budget_grid: [200, 400, 800, 1600, 3200]
+  conditional_extension_trajectory: 6400
+  screen_seeds: [0, 1, 2]
+  confirmation_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+circuits:
+  C1355:
+    role: smaller_structured_logic
+    dataset_cfg: cfg/data/zhu2020/C1355.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/C1355.blif
+  dalu:
+    role: medium_alu_datapath
+    dataset_cfg: cfg/data/zhu2020/dalu.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/dalu.blif
+
+algorithms:
+  drills:
+    report_algorithm: drills_a2c
+    base_config: drillsDOP
+    trajectories_per_episode: 4
+    frozen_exploration:
+      source: mds/exploration_tuning.md
+      status: user_accepted_screening_winner
+      algorithm.drills.entropy_beta: 0.0003
+    fixed_overrides:
+      algorithm.drills.entropy_beta: 0.0003
+      algorithm.drills.trajectories_per_episode: 4
+      baseline: zhu_resyn2
+      baseline_scale: 1.0
+    profiles:
+      - id: control
+        control: true
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.drills.value_loss_coef: 0.5
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+      - id: learning_rate_low
+        overrides:
+          learning_rate: 0.0003
+          gamma: 0.9
+          algorithm.drills.value_loss_coef: 0.5
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+      - id: long_credit
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.99
+          algorithm.drills.value_loss_coef: 0.5
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+      - id: value_loss_high
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.drills.value_loss_coef: 1.0
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+      - id: lr_low_long_credit
+        overrides:
+          learning_rate: 0.0003
+          gamma: 0.99
+          algorithm.drills.value_loss_coef: 0.5
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+      - id: long_credit_value_high
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.99
+          algorithm.drills.value_loss_coef: 1.0
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+      - id: lr_low_value_high
+        overrides:
+          learning_rate: 0.0003
+          gamma: 0.9
+          algorithm.drills.value_loss_coef: 1.0
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+      - id: lr_low_long_credit_value_high
+        overrides:
+          learning_rate: 0.0003
+          gamma: 0.99
+          algorithm.drills.value_loss_coef: 1.0
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+
+stages:
+  screen_drills_interactions:
+    kind: screen
+    algorithm: drills
+    dependencies: []
+    circuits: [C1355, dalu]
+    factorial:
+      factors: [learning_rate_low, long_credit, value_loss_high]
+      cells:
+        control: [0, 0, 0]
+        learning_rate_low: [1, 0, 0]
+        long_credit: [0, 1, 0]
+        value_loss_high: [0, 0, 1]
+        lr_low_long_credit: [1, 1, 0]
+        long_credit_value_high: [0, 1, 1]
+        lr_low_value_high: [1, 0, 1]
+        lr_low_long_credit_value_high: [1, 1, 1]
+      interaction_profiles:
+        - lr_low_long_credit
+        - long_credit_value_high
+        - lr_low_value_high
+        - lr_low_long_credit_value_high
+
+martin:
+  artifact_base: /shared/home/fedor.chernogorskii/agent/art/gflowcircuit
+  job_names:
+    screen_drills_interactions: gfc-base-drills-interactions-v1

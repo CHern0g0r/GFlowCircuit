@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from unittest import TestCase
 
-from src.baseline_tuning_analysis import confirm_selection, select_budget
-from src.baseline_tuning_protocol import BaselineTuningProtocol
+from src.baseline_tuning_analysis import confirm_selection, factorial_contrasts, select_budget
+from src.baseline_tuning_protocol import BaselineTuningProtocol, ProtocolError
+
+
+INTERACTION_PROTOCOL = "cfg/exp/baseline_tuning/drills_interactions.yaml"
 
 
 def _summary(algorithm: str, profile: str, budget: int, circuit: str, hv: float) -> dict:
@@ -63,6 +67,98 @@ def test_protocol_expands_equal_trajectory_tasks() -> None:
     assert len(budget_settings) == 10
     assert len(budget_tasks) == 60
     assert sum(task.training_trajectories for task in budget_tasks) == 74_400
+
+
+def test_interaction_protocol_expands_complete_factorial() -> None:
+    protocol = BaselineTuningProtocol.load(INTERACTION_PROTOCOL)
+    settings = protocol.settings_for_stage("screen_drills_interactions")
+    tasks = protocol.build_tasks("screen_drills_interactions", settings)
+    assert len(settings) == 8
+    assert len(tasks) == 48
+    assert len({task.task_id for task in tasks}) == 48
+    assert {task.training_trajectories for task in tasks} == {800}
+    assert {task.episodes for task in tasks} == {200}
+    assert {task.evaluation_samples for task in tasks} == {50}
+    assert {task.circuit for task in tasks} == {"C1355", "dalu"}
+    assert {task.seed for task in tasks} == {0, 1, 2}
+
+
+def test_interaction_protocol_rejects_invalid_factorial_cells() -> None:
+    mutations = []
+
+    def missing(data: dict) -> None:
+        del data["stages"]["screen_drills_interactions"]["factorial"]["cells"]["control"]
+
+    mutations.append(missing)
+
+    def duplicate(data: dict) -> None:
+        cells = data["stages"]["screen_drills_interactions"]["factorial"]["cells"]
+        cells["lr_low_long_credit"] = [1, 0, 0]
+
+    mutations.append(duplicate)
+
+    def wrong_dimension(data: dict) -> None:
+        cells = data["stages"]["screen_drills_interactions"]["factorial"]["cells"]
+        cells["control"] = [0, 0]
+
+    mutations.append(wrong_dimension)
+
+    for mutation in mutations:
+        protocol = BaselineTuningProtocol.load(INTERACTION_PROTOCOL)
+        protocol.data = deepcopy(protocol.data)
+        mutation(protocol.data)
+        try:
+            protocol.validate_structure()
+        except ProtocolError:
+            pass
+        else:
+            raise AssertionError("invalid factorial metadata was accepted")
+
+
+def test_factorial_contrast_signs() -> None:
+    protocol = BaselineTuningProtocol.load(INTERACTION_PROTOCOL)
+    stage = "screen_drills_interactions"
+    cells = protocol.stages[stage]["factorial"]["cells"]
+    summary_rows = []
+    seed_rows = []
+    for circuit in ("C1355", "dalu"):
+        for profile, cell in cells.items():
+            a, b, c = (1.0 if value else -1.0 for value in cell)
+            value = 10.0 + 0.5 * a + 0.25 * a * b - 0.125 * a * b * c
+            summary_rows.append(
+                {
+                    "algorithm": "drills",
+                    "profile_id": profile,
+                    "training_trajectories": 800,
+                    "circuit": circuit,
+                    "mean_hypervolume": value,
+                    "mean_product_improvement": value,
+                }
+            )
+            for seed in (0, 1, 2):
+                seed_rows.append(
+                    {
+                        "algorithm": "drills",
+                        "profile_id": profile,
+                        "training_trajectories": 800,
+                        "circuit": circuit,
+                        "seed": seed,
+                        "hypervolume": value,
+                        "role": "screen",
+                    }
+                )
+    contrasts = {
+        row["contrast_id"]: row
+        for row in factorial_contrasts(protocol, stage, summary_rows, seed_rows)
+    }
+    assert len(contrasts) == 7
+    assert contrasts["learning_rate_low"]["mean_effect"] > 0.0
+    assert contrasts["learning_rate_low__x__long_credit"]["mean_effect"] > 0.0
+    assert (
+        contrasts["learning_rate_low__x__long_credit__x__value_loss_high"]["mean_effect"]
+        < 0.0
+    )
+    assert all(row["paired_blocks"] == 6 for row in contrasts.values())
 
 
 def test_conditional_extension_confirmation_and_common_budget() -> None:
@@ -229,6 +325,15 @@ class BaselineTuningTest(TestCase):
 
     def test_protocol_matrix(self) -> None:
         test_protocol_expands_equal_trajectory_tasks()
+
+    def test_interaction_protocol_matrix(self) -> None:
+        test_interaction_protocol_expands_complete_factorial()
+
+    def test_invalid_factorial_metadata(self) -> None:
+        test_interaction_protocol_rejects_invalid_factorial_cells()
+
+    def test_factorial_effects(self) -> None:
+        test_factorial_contrast_signs()
 
     def test_conditional_stages(self) -> None:
         test_conditional_extension_confirmation_and_common_budget()
