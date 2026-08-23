@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from subprocess import CompletedProcess
+from tempfile import TemporaryDirectory
 from unittest import TestCase
+from unittest.mock import patch
 
 from src.baseline_tuning_analysis import (
     confirm_selection,
@@ -11,11 +14,13 @@ from src.baseline_tuning_analysis import (
     select_screen,
 )
 from src.baseline_tuning_protocol import BaselineTuningProtocol, ProtocolError
+from src.exploration_tuning import validate_hydra_compositions
 
 
 INTERACTION_PROTOCOL = "cfg/exp/baseline_tuning/drills_interactions.yaml"
 PPO_INTERACTION_PROTOCOL = "cfg/exp/baseline_tuning/ppo_epoch_clip_interactions.yaml"
 DRILLS_BUDGET_PROTOCOL = "cfg/exp/baseline_tuning/drills_interaction_budget.yaml"
+PPO_CLIP_BUDGET_PROTOCOL = "cfg/exp/baseline_tuning/ppo_clip_budget.yaml"
 
 
 def _summary(algorithm: str, profile: str, budget: int, circuit: str, hv: float) -> dict:
@@ -173,6 +178,11 @@ def test_standalone_budget_rejects_invalid_explicit_profiles() -> None:
 
     mutations.append(missing)
 
+    def single(data: dict) -> None:
+        data["stages"][stage]["profiles"] = ["lr_low_value_high"]
+
+    mutations.append(single)
+
     def duplicate(data: dict) -> None:
         data["stages"][stage]["profiles"] = ["lr_low_value_high", "lr_low_value_high"]
 
@@ -198,6 +208,64 @@ def test_standalone_budget_rejects_invalid_explicit_profiles() -> None:
             pass
         else:
             raise AssertionError("invalid standalone budget profiles were accepted")
+
+
+def test_standalone_ppo_clip_budget_protocol_matrix() -> None:
+    protocol = BaselineTuningProtocol.load(PPO_CLIP_BUDGET_PROTOCOL)
+    stage = "budget_ppo_clip"
+    settings = protocol.settings_for_stage(stage)
+    tasks = protocol.build_tasks(stage, settings)
+
+    assert protocol.budget_profiles(stage) == ["clip_low", "epochs_low", "epochs_high"]
+    assert len(settings) == 15
+    assert len(tasks) == 90
+    assert len({task.task_id for task in tasks}) == 90
+    assert sum(task.training_trajectories for task in tasks) == 111_600
+    assert sum(task.episodes for task in tasks) == 27_900
+    assert sum(task.evaluation_samples for task in tasks) == 4_500
+    assert {task.training_trajectories for task in tasks} == {200, 400, 800, 1600, 3200}
+    assert {task.circuit for task in tasks} == {"C1355", "dalu"}
+    assert {task.seed for task in tasks} == {0, 1, 2}
+    assert {task.evaluation_samples for task in tasks} == {50}
+    assert protocol.data["common"]["evaluation_seed"] == 42
+    assert {task.episodes * 4 for task in tasks} == {
+        task.training_trajectories for task in tasks
+    }
+    assert {task.fixed_overrides["algorithm.ppo.entropy_beta"] for task in tasks} == {
+        0.03
+    }
+    assert {task.fixed_overrides["algorithm.ppo.rollout_steps"] for task in tasks} == {80}
+    assert {task.fixed_overrides["baseline"] for task in tasks} == {"zhu_resyn2"}
+    by_profile = {setting.profile_id: setting.overrides for setting in settings}
+    assert by_profile["clip_low"]["algorithm.ppo.ppo_epochs"] == 20
+    assert by_profile["clip_low"]["algorithm.ppo.clip_eps"] == 0.1
+    assert by_profile["epochs_low"]["algorithm.ppo.ppo_epochs"] == 10
+    assert by_profile["epochs_low"]["algorithm.ppo.clip_eps"] == 0.2
+    assert by_profile["epochs_high"]["algorithm.ppo.ppo_epochs"] == 40
+    assert by_profile["epochs_high"]["algorithm.ppo.clip_eps"] == 0.2
+
+
+def test_hydra_preflight_composes_every_ppo_budget_task() -> None:
+    protocol = BaselineTuningProtocol.load(PPO_CLIP_BUDGET_PROTOCOL)
+    stage = "budget_ppo_clip"
+    tasks = protocol.build_tasks(stage, protocol.settings_for_stage(stage))
+    completed = CompletedProcess(args=["fake"], returncode=0, stdout="{}\n", stderr="")
+    with TemporaryDirectory() as directory:
+        with patch(
+            "src.exploration_tuning._task_commands",
+            return_value=(["fake"], ["unused"]),
+        ) as task_commands, patch(
+            "src.exploration_tuning.subprocess.run",
+            return_value=completed,
+        ) as run:
+            validate_hydra_compositions(
+                protocol=protocol,
+                tasks=tasks,
+                output_dir=protocol.repo_root / directory,
+                python_executable="python",
+            )
+    assert task_commands.call_count == 90
+    assert run.call_count == 90
 
 
 def test_factorial_contrast_signs() -> None:
@@ -471,6 +539,35 @@ def test_budget_rule_requires_extension_for_improving_curve() -> None:
     assert result["status"] == "extend_required"
 
 
+def test_three_profile_budget_selects_ranked_runner_up_at_winner_budget() -> None:
+    protocol = BaselineTuningProtocol.load(PPO_CLIP_BUDGET_PROTOCOL)
+    curves = {
+        "clip_low": {200: 0.080, 400: 0.095, 800: 0.098},
+        "epochs_low": {200: 0.080, 400: 0.099, 800: 0.096},
+        "epochs_high": {200: 0.080, 400: 0.100, 800: 0.0995},
+    }
+    summaries = []
+    seeds = []
+    for profile, curve in curves.items():
+        for budget, value in curve.items():
+            for circuit in ("C1355", "dalu"):
+                summaries.append(_summary("ppo", profile, budget, circuit, value))
+                for seed in range(3):
+                    seeds.append(_seed("ppo", profile, budget, circuit, seed, value))
+
+    result = select_budget(
+        protocol,
+        "budget_ppo_clip",
+        summaries,
+        seeds,
+        top_profiles=["clip_low", "epochs_low", "epochs_high"],
+    )["ppo"]
+    assert result["status"] == "selected"
+    assert result["selected_profile"] == "epochs_high"
+    assert result["selected_budget"] == 400
+    assert result["runner_up_profile"] == "epochs_low"
+
+
 def test_confirmation_accepts_equivalent_successor_and_better_profile() -> None:
     protocol = BaselineTuningProtocol.load()
     payload = {
@@ -533,6 +630,12 @@ class BaselineTuningTest(TestCase):
     def test_invalid_standalone_budget_profiles(self) -> None:
         test_standalone_budget_rejects_invalid_explicit_profiles()
 
+    def test_standalone_ppo_clip_budget_matrix(self) -> None:
+        test_standalone_ppo_clip_budget_protocol_matrix()
+
+    def test_all_ppo_budget_tasks_are_composed(self) -> None:
+        test_hydra_preflight_composes_every_ppo_budget_task()
+
     def test_factorial_effects(self) -> None:
         test_factorial_contrast_signs()
 
@@ -553,6 +656,9 @@ class BaselineTuningTest(TestCase):
 
     def test_unresolved_curve_extension(self) -> None:
         test_budget_rule_requires_extension_for_improving_curve()
+
+    def test_three_profile_runner_up_selection(self) -> None:
+        test_three_profile_budget_selects_ranked_runner_up_at_winner_budget()
 
     def test_confirmation_gate(self) -> None:
         test_confirmation_accepts_equivalent_successor_and_better_profile()

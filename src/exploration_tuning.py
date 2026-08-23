@@ -410,12 +410,9 @@ def validate_hydra_compositions(
     output_dir: Path,
     python_executable: str,
 ) -> None:
-    """Compose one representative config per distinct algorithm/setting."""
+    """Compose every task config before any training starts."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    representatives: dict[tuple[str, str], ExperimentTask] = {}
     for task in tasks:
-        representatives.setdefault((task.algorithm, task.setting.key), task)
-    for task in representatives.values():
         attempt = output_dir / f"_{task.task_id}"
         command, _ = _task_commands(
             task,
@@ -432,7 +429,7 @@ def validate_hydra_compositions(
             text=True,
             check=False,
         )
-        name = f"{task.algorithm}__{task.setting.setting_id}"
+        name = task.task_id
         (output_dir / f"{name}.yaml").write_text(completed.stdout, encoding="utf-8")
         (output_dir / f"{name}.stderr.log").write_text(completed.stderr, encoding="utf-8")
         if completed.returncode != 0:

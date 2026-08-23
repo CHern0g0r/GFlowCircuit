@@ -29,6 +29,12 @@ canonical budget stages, it locks its two profiles directly and has no screen
 artifact dependency. A result of `extend_required` is reported but does not
 launch the separate 6,400-trajectory extension.
 
+`ppo_clip_budget.yaml` resolves the lower-clipping ambiguity by rerunning
+`clip_low`, `epochs_low`, and `epochs_high` together at 200, 400, 800, 1,600,
+and 3,200 trajectories. It uses the same standalone budget interface, does not
+reuse the completed 800-trajectory artifacts, and reports `extend_required`
+without launching a 6,400-trajectory stage.
+
 ## Locked decisions
 
 - Circuits: `C1355` (smaller structured logic) and `dalu` (medium ALU/datapath).
@@ -99,6 +105,14 @@ Validate the standalone DRiLLS interaction budget matrix with:
 python -m src.baseline_tuning \
   --protocol cfg/exp/baseline_tuning/drills_interaction_budget.yaml \
   validate --stage budget_drills_interactions --skip-compose
+```
+
+Validate the standalone PPO clipping budget matrix with:
+
+```bash
+python -m src.baseline_tuning \
+  --protocol cfg/exp/baseline_tuning/ppo_clip_budget.yaml \
+  validate --stage budget_ppo_clip --skip-compose
 ```
 
 The Martin jobs use the full validation path and abort if Hydra composition,

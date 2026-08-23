@@ -109,7 +109,15 @@ def _rank_candidates(
                 "mean_product_improvement": _mean(products),
             }
         )
-    pending = list(ranked)
+    return _rank_scored_candidates(ranked, tie_threshold=tie_threshold)
+
+
+def _rank_scored_candidates(
+    rows: list[dict[str, Any]],
+    *,
+    tie_threshold: float,
+) -> list[dict[str, Any]]:
+    pending = list(rows)
     output: list[dict[str, Any]] = []
     while pending:
         best = max(float(row["selection_score"]) for row in pending)
@@ -463,8 +471,18 @@ def select_budget(
         )
     )
     winner = eligible[0]
-    other_profiles = [profile for profile in top_profiles if profile != winner["profile_id"]]
-    runner_up = other_profiles[0]
+    runner_up_candidates = [
+        row
+        for row in ranked
+        if int(row["training_trajectories"]) == int(winner["training_trajectories"])
+        and str(row["profile_id"]) != str(winner["profile_id"])
+    ]
+    if not runner_up_candidates:
+        raise ValueError(f"{algorithm} budget curve produced no runner-up profile")
+    runner_up = _rank_scored_candidates(
+        runner_up_candidates,
+        tie_threshold=float(common["practical_tie_threshold"]),
+    )[0]["profile_id"]
     return {
         algorithm: {
             "status": "selected",

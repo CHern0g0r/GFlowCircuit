@@ -221,9 +221,11 @@ class BaselineTuningProtocol:
                 if not isinstance(explicit_profiles, list):
                     raise ProtocolError(f"stage {stage} profiles must be a list")
                 selected_profiles = [str(value) for value in explicit_profiles]
-                if len(selected_profiles) != 2 or len(set(selected_profiles)) != 2:
+                if len(selected_profiles) < 2 or len(set(selected_profiles)) != len(
+                    selected_profiles
+                ):
                     raise ProtocolError(
-                        f"stage {stage} must declare exactly two distinct profiles"
+                        f"stage {stage} must declare at least two distinct profiles"
                     )
                 if not set(selected_profiles) <= profile_ids:
                     raise ProtocolError(
@@ -403,7 +405,7 @@ class BaselineTuningProtocol:
         *,
         payloads: Mapping[str, Any] | None = None,
     ) -> list[str]:
-        """Resolve the two profiles for dependency-driven or standalone budget stages."""
+        """Resolve profiles for dependency-driven or standalone budget stages."""
         cfg = self.stages[stage]
         if str(cfg.get("kind")) != "budget":
             raise ProtocolError(f"stage is not a budget stage: {stage}")
