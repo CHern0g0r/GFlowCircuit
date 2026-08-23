@@ -15,6 +15,7 @@ from src.baseline_tuning_protocol import BaselineTuningProtocol, ProtocolError
 
 INTERACTION_PROTOCOL = "cfg/exp/baseline_tuning/drills_interactions.yaml"
 PPO_INTERACTION_PROTOCOL = "cfg/exp/baseline_tuning/ppo_epoch_clip_interactions.yaml"
+DRILLS_BUDGET_PROTOCOL = "cfg/exp/baseline_tuning/drills_interaction_budget.yaml"
 
 
 def _summary(algorithm: str, profile: str, budget: int, circuit: str, hv: float) -> dict:
@@ -120,6 +121,83 @@ def test_interaction_protocol_rejects_invalid_factorial_cells() -> None:
             pass
         else:
             raise AssertionError("invalid factorial metadata was accepted")
+
+
+def test_standalone_drills_budget_protocol_matrix() -> None:
+    protocol = BaselineTuningProtocol.load(DRILLS_BUDGET_PROTOCOL)
+    stage = "budget_drills_interactions"
+    settings = protocol.settings_for_stage(stage)
+    tasks = protocol.build_tasks(stage, settings)
+
+    assert protocol.budget_profiles(stage) == [
+        "lr_low_value_high",
+        "lr_low_long_credit_value_high",
+    ]
+    assert len(settings) == 10
+    assert len(tasks) == 60
+    assert len({task.task_id for task in tasks}) == 60
+    assert sum(task.training_trajectories for task in tasks) == 74_400
+    assert sum(task.episodes for task in tasks) == 18_600
+    assert sum(task.evaluation_samples for task in tasks) == 3_000
+    assert {task.training_trajectories for task in tasks} == {200, 400, 800, 1600, 3200}
+    assert {task.evaluation_samples for task in tasks} == {50}
+    assert {task.circuit for task in tasks} == {"C1355", "dalu"}
+    assert {task.seed for task in tasks} == {0, 1, 2}
+    assert protocol.data["common"]["evaluation_seed"] == 42
+    assert {task.episodes * 4 for task in tasks} == {
+        task.training_trajectories for task in tasks
+    }
+    assert {task.fixed_overrides["algorithm.drills.entropy_beta"] for task in tasks} == {
+        0.0003
+    }
+    assert {task.fixed_overrides["baseline"] for task in tasks} == {"zhu_resyn2"}
+    assert {task.setting.overrides["learning_rate"] for task in tasks} == {0.0003}
+    assert {task.setting.overrides["algorithm.drills.value_loss_coef"] for task in tasks} == {
+        1.0
+    }
+    assert {task.setting.overrides["gamma"] for task in tasks} == {0.9, 0.99}
+    assert {task.setting.overrides["algorithm.drills.normalize_advantages"] for task in tasks} == {
+        False
+    }
+    assert {task.setting.overrides["algorithm.drills.clip_grad_norm"] for task in tasks} == {
+        None
+    }
+
+
+def test_standalone_budget_rejects_invalid_explicit_profiles() -> None:
+    stage = "budget_drills_interactions"
+    mutations = []
+
+    def missing(data: dict) -> None:
+        del data["stages"][stage]["profiles"]
+
+    mutations.append(missing)
+
+    def duplicate(data: dict) -> None:
+        data["stages"][stage]["profiles"] = ["lr_low_value_high", "lr_low_value_high"]
+
+    mutations.append(duplicate)
+
+    def unknown(data: dict) -> None:
+        data["stages"][stage]["profiles"][1] = "unknown"
+
+    mutations.append(unknown)
+
+    def dependency_and_explicit(data: dict) -> None:
+        data["stages"][stage]["dependencies"] = [stage]
+
+    mutations.append(dependency_and_explicit)
+
+    for mutation in mutations:
+        protocol = BaselineTuningProtocol.load(DRILLS_BUDGET_PROTOCOL)
+        protocol.data = deepcopy(protocol.data)
+        mutation(protocol.data)
+        try:
+            protocol.validate_structure()
+        except ProtocolError:
+            pass
+        else:
+            raise AssertionError("invalid standalone budget profiles were accepted")
 
 
 def test_factorial_contrast_signs() -> None:
@@ -448,6 +526,12 @@ class BaselineTuningTest(TestCase):
 
     def test_invalid_factorial_metadata(self) -> None:
         test_interaction_protocol_rejects_invalid_factorial_cells()
+
+    def test_standalone_drills_budget_matrix(self) -> None:
+        test_standalone_drills_budget_protocol_matrix()
+
+    def test_invalid_standalone_budget_profiles(self) -> None:
+        test_standalone_budget_rejects_invalid_explicit_profiles()
 
     def test_factorial_effects(self) -> None:
         test_factorial_contrast_signs()

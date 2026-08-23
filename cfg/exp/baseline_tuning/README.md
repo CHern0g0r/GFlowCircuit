@@ -22,6 +22,13 @@ PPO epoch counts 10, 20, and 40 with clipping epsilons 0.2 and 0.1. It declares
 paired difference-of-differences and direct parent comparisons, which are
 written to the same `interaction_contrasts.csv` output.
 
+`drills_interaction_budget.yaml` is the standalone budget follow-up for the
+two winning DRiLLS interaction profiles. It reruns both profiles at 200, 400,
+800, 1,600, and 3,200 trajectories under a fresh protocol hash. Unlike the
+canonical budget stages, it locks its two profiles directly and has no screen
+artifact dependency. A result of `extend_required` is reported but does not
+launch the separate 6,400-trajectory extension.
+
 ## Locked decisions
 
 - Circuits: `C1355` (smaller structured logic) and `dalu` (medium ALU/datapath).
@@ -84,6 +91,14 @@ Validate the PPO epoch/clipping matrix with:
 python -m src.baseline_tuning \
   --protocol cfg/exp/baseline_tuning/ppo_epoch_clip_interactions.yaml \
   validate --stage screen_ppo_epoch_clip_interactions --skip-compose
+```
+
+Validate the standalone DRiLLS interaction budget matrix with:
+
+```bash
+python -m src.baseline_tuning \
+  --protocol cfg/exp/baseline_tuning/drills_interaction_budget.yaml \
+  validate --stage budget_drills_interactions --skip-compose
 ```
 
 The Martin jobs use the full validation path and abort if Hydra composition,

@@ -1,0 +1,82 @@
+version: 1
+campaign: baseline-drills-interaction-budget-v1
+
+common:
+  num_steps: 20
+  available_actions: [0, 1, 2, 3, 4, 5, 6]
+  evaluation_seed: 42
+  evaluation_samples: 50
+  discovery_emit_every_trajectories: 50
+  hypervolume_reference: [1.0, 1.0]
+  practical_tie_threshold: 0.02
+  plateau_relative_tolerance: 0.02
+  bootstrap_repetitions: 10000
+  bootstrap_seed: 20260819
+  screen_training_trajectories: 800
+  budget_grid: [200, 400, 800, 1600, 3200]
+  conditional_extension_trajectory: 6400
+  screen_seeds: [0, 1, 2]
+  confirmation_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+circuits:
+  C1355:
+    role: smaller_structured_logic
+    dataset_cfg: cfg/data/zhu2020/C1355.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/C1355.blif
+  dalu:
+    role: medium_alu_datapath
+    dataset_cfg: cfg/data/zhu2020/dalu.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/dalu.blif
+
+algorithms:
+  drills:
+    report_algorithm: drills_a2c
+    base_config: drillsDOP
+    trajectories_per_episode: 4
+    frozen_exploration:
+      source: mds/exploration_tuning.md
+      status: user_accepted_screening_winner
+      algorithm.drills.entropy_beta: 0.0003
+    fixed_overrides:
+      algorithm.drills.entropy_beta: 0.0003
+      algorithm.drills.trajectories_per_episode: 4
+      baseline: zhu_resyn2
+      baseline_scale: 1.0
+    profiles:
+      - id: control
+        control: true
+        overrides:
+          learning_rate: 0.001
+          gamma: 0.9
+          algorithm.drills.value_loss_coef: 0.5
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+      - id: lr_low_value_high
+        overrides:
+          learning_rate: 0.0003
+          gamma: 0.9
+          algorithm.drills.value_loss_coef: 1.0
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+      - id: lr_low_long_credit_value_high
+        overrides:
+          learning_rate: 0.0003
+          gamma: 0.99
+          algorithm.drills.value_loss_coef: 1.0
+          algorithm.drills.normalize_advantages: false
+          algorithm.drills.clip_grad_norm: null
+
+stages:
+  budget_drills_interactions:
+    kind: budget
+    algorithm: drills
+    dependencies: []
+    profiles:
+      - lr_low_value_high
+      - lr_low_long_credit_value_high
+    circuits: [C1355, dalu]
+
+martin:
+  artifact_base: /shared/home/fedor.chernogorskii/agent/art/gflowcircuit
+  job_names:
+    budget_drills_interactions: gfc-base-budget-drills-interactions-v1

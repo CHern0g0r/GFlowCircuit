@@ -2,9 +2,9 @@
 
 ## Executive decision
 
-The compact screen and trajectory-budget experiments selected an 800-trajectory
-budget for all three baseline methods. None needs the conditional 6,400-trajectory
-extension.
+The initial compact screen and trajectory-budget experiments selected an
+800-trajectory budget for all three baseline methods. None of those original
+profiles needs the conditional 6,400-trajectory extension.
 
 | Method | Selected profile | Selected budget | Next tested budget | 800→1,600 paired normalized HV gain (95% CI) | 6,400 test? |
 | --- | --- | ---: | ---: | ---: | --- |
@@ -19,19 +19,37 @@ two protocol gates for an eligible plateau. The extension is required only
 when no tested budget is eligible, so running 6,400 trajectories would not be
 supported by the stopping rule.
 
-The next justified stage is ten-seed confirmation of each selected profile at
-800 trajectories, its runner-up at 800, and the selected profile at 1,600. The
-three-seed results below are sufficient to reject the 6,400 extension, but they
-are not a substitute for that confirmation.
+Two subsequent interaction screens change the immediate path for DRiLLS-A2C
+but not for PPO:
+
+| Follow-up screen | Winner | Runner-up | Combined profile in top two? | Decision |
+| --- | --- | --- | --- | --- |
+| DRiLLS-A2C LR × gamma × value loss | `lr_low_value_high` | `lr_low_long_credit_value_high` | Yes, both | Postpone confirmation and run a new budget curve for both combined profiles |
+| PPO epochs × clipping | `clip_low` | `epochs_low` | No | Do not budget-test either combined profile; continue the existing PPO confirmation path |
+
+The old DRiLLS `long_credit` budget curve cannot establish the appropriate
+budget for a combined profile. The PPO screen does not justify a new budget
+curve for either interaction profile, although the strong rerun of `clip_low`
+is an unresolved single-factor result discussed below. All interaction-screen
+results still use only three training seeds and are screening evidence, not a
+substitute for ten-seed confirmation.
 
 ## Experimental contract and validity
 
-The campaign used project commit
+The initial campaign used project commit
 `cd32b58ac705118cc7024e8b29d2ab54dbb71648` and protocol hash
 `d741b16c335400e9d68a51bb4729300730d1f2901000bf45bba35380eec889b3`.
 Exploration was frozen before this campaign: REINFORCE entropy beta `0.01`,
 DRiLLS-A2C entropy beta `0.0003`, and PPO entropy beta `0.03`. Thus, the results
 below compare only the remaining baseline training hyperparameters.
+
+The interaction campaigns used project commit
+`5449881f6da23c47051f128b294e63f7dc600cbf`. The DRiLLS protocol hash was
+`39d034095e46ed8dd628641664b7b8602c891278629a137b05f490da0128f7e1` and
+the PPO protocol hash was
+`0a7cd710dcada90b20d7ac81e9313e40aaf1d6efbf1cae0a3d4ce01009ba54ff`.
+They retained the same circuits, seeds, 800-trajectory budget, and 50-sample
+evaluation contract.
 
 The test circuits were `C1355` (smaller structured logic) and `dalu` (medium
 ALU/datapath). Every setting used training seeds 0, 1, and 2. The primary
@@ -57,11 +75,13 @@ descending order of the displayed average selection score.
 | REINFORCE budget curve | 20729 | completed, `0:0` | 4:17:58 | 6.1 GiB | 48 complete + 12 reused |
 | DRiLLS-A2C budget curve | 20749 | completed, `0:0` | 3:16:22 | 6.1 GiB | 48 complete + 12 reused |
 | PPO budget curve | 20751 | completed, `0:0` | 4:44:29 | 6.5 GiB | 48 complete + 12 reused |
+| DRiLLS-A2C interaction screen | 20862 | completed, `0:0` | 1:52:02 | 6.1 GiB | 48/48 complete |
+| PPO epoch/clip interaction screen | 20863 | completed, `0:0` | 2:00:27 | 6.6 GiB | 36/36 complete |
 
 The reused budget tasks are the matching 800-trajectory screen runs for the
 two finalists (two circuits × three seeds × two profiles). All manifests have
-state `complete`, all three budget jobs exited `0:0`, and their scheduler stderr
-logs are empty.
+state `complete`; all three budget jobs and both interaction jobs exited `0:0`;
+and their scheduler stderr logs are empty.
 
 ## REINFORCE
 
@@ -167,6 +187,56 @@ The DRiLLS result is another example where scalar product improvement keeps
 rising while sampled Pareto-front HV falls. More training trajectories do not
 translate into better 50-sample coverage here.
 
+### Learning-rate, credit-horizon, and value-loss interaction screen
+
+The follow-up screen reran the control and three single-factor profiles and
+completed the full binary factorial over learning rate (`1e-3`/`3e-4`), gamma
+(`0.9`/`0.99`), and value-loss coefficient (`0.5`/`1.0`). All other settings
+were fixed: raw advantages, no gradient clipping, entropy beta `0.0003`, four
+trajectories per episode, 800 training trajectories, and 50 evaluation
+samples.
+
+| Rank | Profile | Learning rate | Gamma | Value coefficient | C1355 HV | dalu HV | Selection score | Mean product improvement | Mean task time (min) |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | `lr_low_value_high` | 3e-4 | 0.9 | 1.0 | 0.077915 ± 0.004155 | 0.036109 ± 0.003418 | 0.9652 | 0.3060 | 8.98 |
+| 2 | `lr_low_long_credit_value_high` | 3e-4 | 0.99 | 1.0 | 0.074990 ± 0.004173 | 0.037324 ± 0.003413 | 0.9634 | 0.2999 | 9.37 |
+| 3 | `learning_rate_low` | 3e-4 | 0.9 | 0.5 | 0.080891 ± 0.000125 | 0.032232 ± 0.000762 | 0.9316 | 0.3154 | 8.37 |
+| 4 | `value_loss_high` | 1e-3 | 0.9 | 1.0 | 0.080764 ± 0.000396 | 0.029085 ± 0.000225 | 0.8887 | 0.3572 | 8.51 |
+| 5 | `control` | 1e-3 | 0.9 | 0.5 | 0.080688 ± 0.000504 | 0.028828 ± 0.000309 | 0.8848 | 0.3595 | 7.39 |
+| 6 | `long_credit_value_high` | 1e-3 | 0.99 | 1.0 | 0.080891 ± 0.000000 | 0.028710 ± 0.000600 | 0.8845 | 0.3438 | 8.92 |
+| 7 | `lr_low_long_credit` | 3e-4 | 0.99 | 0.5 | 0.074914 ± 0.008400 | 0.029829 ± 0.002577 | 0.8625 | 0.3035 | 10.96 |
+| 8 | `long_credit` | 1e-3 | 0.99 | 0.5 | 0.080917 ± 0.000180 | 0.027988 ± 0.000723 | 0.8749 | 0.3555 | 9.24 |
+
+Both top profiles combine the lower learning rate with the higher value-loss
+coefficient. They sacrifice some C1355 HV but produce large dalu gains, which
+raises their balanced selection scores. Adding gamma `0.99` produces the best
+dalu mean, but slightly lowers the overall score relative to
+`lr_low_value_high`.
+
+The paired factorial effects below are changes in circuit-normalized sampled
+HV over the six circuit/seed blocks. Positive values favor the named factor or
+combination.
+
+| Factorial contrast | Mean effect | Bootstrap 95% CI |
+| --- | ---: | ---: |
+| Low learning rate | +0.04746 | [-0.03068, +0.12225] |
+| Long credit | -0.02125 | [-0.04979, +0.00465] |
+| High value-loss coefficient | +0.03696 | [-0.01125, +0.08619] |
+| Low LR × long credit | -0.02842 | [-0.09734, +0.02842] |
+| Low LR × high value loss | +0.06049 | [-0.02021, +0.14580] |
+| Long credit × high value loss | +0.03648 | [-0.00458, +0.09943] |
+| Low LR × long credit × high value loss | +0.06174 | [-0.04528, +0.19036] |
+
+No DRiLLS factorial interval excludes zero, so these effect estimates are
+explanatory rather than confirmatory. The largest positive two-way estimate is
+low learning rate × high value-loss coefficient, consistent with the winning
+profile; the gamma `0.99` main effect is mildly negative. Under the predeclared
+ranking gate, both requested interaction profiles enter the top two. DRiLLS
+confirmation must therefore be postponed while a new trajectory-budget curve
+is run for `lr_low_value_high` and
+`lr_low_long_credit_value_high`. The completed `long_credit` curve cannot be
+transferred to either combined profile.
+
 ## PPO
 
 ### Hyperparameter screen at 800 trajectories
@@ -223,11 +293,58 @@ robust HV advantage for 40 epochs, the 10-epoch runner-up would be attractive
 for compute efficiency. The current protocol correctly carries both profiles
 into confirmation rather than replacing the primary-metric winner early.
 
+### Epoch-count and clipping interaction screen
+
+The follow-up screen reran the control, both epoch changes, and `clip_low`, then
+tested the two requested combinations. Learning rate `1e-3`, gamma `0.9`,
+minibatch size 64, value-loss coefficient `0.5`, normalized advantages, GAE
+lambda `0.95`, no gradient clipping, entropy beta `0.03`, and rollout length 80
+remained fixed.
+
+| Rank | Profile | PPO epochs | Clipping epsilon | C1355 HV | dalu HV | Selection score | Mean product improvement | Mean task time (min) |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | `clip_low` | 20 | 0.1 | 0.081044 ± 0.000000 | 0.040603 ± 0.000716 | 1.0000 | 0.4198 | 12.18 |
+| 2 | `epochs_low` | 10 | 0.2 | 0.079619 ± 0.000036 | 0.040117 ± 0.000625 | 0.9852 | 0.3958 | 10.09 |
+| 3 | `epochs_low_clip_low` | 10 | 0.1 | 0.079594 ± 0.000000 | 0.038547 ± 0.003189 | 0.9657 | 0.3892 | 10.42 |
+| 4 | `epochs_high_clip_low` | 40 | 0.1 | 0.080688 ± 0.000504 | 0.037366 ± 0.003133 | 0.9579 | 0.4184 | 15.41 |
+| 5 | `epochs_high` | 40 | 0.2 | 0.080662 ± 0.000540 | 0.036435 ± 0.003716 | 0.9463 | 0.4148 | 15.05 |
+| 6 | `control` | 20 | 0.2 | 0.079187 ± 0.000288 | 0.035442 ± 0.003601 | 0.9250 | 0.4030 | 12.00 |
+
+Neither combined profile enters the top two. Lower clipping by itself ranks
+first, while the 10-epoch profile remains the best epoch-only change and is
+about 5 minutes faster per task than the 40-epoch profiles.
+
+| Paired contrast on circuit-normalized sampled HV | Mean effect | Bootstrap 95% CI |
+| --- | ---: | ---: |
+| Low epochs × low clip interaction | -0.09450 | [-0.20886, -0.00492] |
+| High epochs × low clip interaction | -0.06340 | [-0.20454, +0.06422] |
+| `epochs_low_clip_low` − `epochs_low` | -0.01949 | [-0.07612, +0.01488] |
+| `epochs_low_clip_low` − `clip_low` | -0.03427 | [-0.09621, +0.00979] |
+| `epochs_high_clip_low` − `epochs_high` | +0.01162 | [-0.06305, +0.09141] |
+| `epochs_high_clip_low` − `clip_low` | -0.04206 | [-0.10493, +0.01508] |
+
+The low-epochs × low-clip interaction is antagonistic and its interval excludes
+zero: the two individually useful changes do not stack additively. The high-
+epochs interaction is also estimated as negative, but remains uncertain. None
+of the four direct combined-versus-parent comparisons excludes zero.
+
+Under the predeclared gate, no combined-profile budget curve is warranted and
+the existing PPO confirmation path should continue. `clip_low` is nevertheless
+a strong unresolved single-factor candidate: it ranks first in this fresh
+rerun, whereas the original screen ranked it third. Promoting it to the final
+PPO candidate would require its own trajectory-budget curve, because the
+completed curve covers only `epochs_high` and `epochs_low`. Without that
+additional scope, retain those two epoch profiles for confirmation and treat
+the `clip_low` rerun as sensitivity evidence.
+
 ## Same-budget cross-method snapshot
 
-All selected profiles use 800 trajectories, so their three-seed results permit
-a direct sample-efficiency snapshot. This is descriptive; the planned common-
-budget stage with ten paired seeds is the confirmatory cross-method comparison.
+All initially selected profiles use 800 trajectories, so their three-seed
+results permit a direct sample-efficiency snapshot. This is descriptive; the
+planned common-budget stage with ten paired seeds is the confirmatory cross-
+method comparison. The DRiLLS row is superseded as a confirmation candidate by
+the interaction-screen decision above, but remains the valid result from the
+completed original campaign.
 
 | Method/profile | C1355 HV | dalu HV | Mean product improvement | Mean task time (min) |
 | --- | ---: | ---: | ---: | ---: |
@@ -244,19 +361,21 @@ speed: update counts and per-task runtimes differ substantially by algorithm.
 
 ## Final recommendations
 
-Use these configurations for the ten-seed confirmation stage:
+- **REINFORCE:** proceed to ten-seed confirmation with `policy_lr_high` at 800
+  trajectories, `control` at 800, and the selected profile at 1,600. Its
+  original curve does not justify a 6,400-trajectory run.
+- **DRiLLS-A2C:** do not start confirmation yet. Run a new budget curve for
+  `lr_low_value_high` and `lr_low_long_credit_value_high`, using the same
+  circuits, seeds, and 50-sample evaluation contract. Determine the selected
+  budget and any conditional 6,400 extension from that new curve; the old
+  `long_credit` curve cannot answer either question for the combined profiles.
+- **PPO:** do not budget-test `epochs_low_clip_low` or
+  `epochs_high_clip_low`. Continue the existing confirmation path with
+  `epochs_high` and `epochs_low` unless the scope is explicitly expanded to
+  promote `clip_low`; promotion would first require a `clip_low` budget curve.
+  The original epoch-profile curve does not justify a 6,400-trajectory run.
 
-- **REINFORCE:** `policy_lr_high` at 800 trajectories — policy LR `2e-3`,
-  value LR `3e-3`, gamma `0.9`, unnormalized returns, no gradient clipping,
-  fixed entropy beta `0.01`.
-- **DRiLLS-A2C:** `long_credit` at 800 trajectories — learning rate `1e-3`,
-  gamma `0.99`, value-loss coefficient `0.5`, raw advantages, no gradient
-  clipping, four trajectories per episode, fixed entropy beta `0.0003`.
-- **PPO:** `epochs_high` at 800 trajectories — learning rate `1e-3`, gamma
-  `0.9`, 40 PPO epochs, minibatch size 64, clipping epsilon `0.2`, value-loss
-  coefficient `0.5`, normalized advantages, GAE lambda `0.95`, no gradient
-  clipping, rollout length 80, fixed entropy beta `0.03`.
-
-Do **not** run the 6,400-trajectory extension for any method. Preserve the
-runner-ups (`control`, `learning_rate_low`, and `epochs_low`) and the 1,600-
-trajectory successors for the predeclared ten-seed confirmation tests.
+Thus, no completed original profile needs 6,400 trajectories, and neither PPO
+interaction profile warrants further budget testing. The only newly required
+budget work is for the two winning DRiLLS combined profiles; whether either
+eventually needs 6,400 trajectories remains conditional on that curve.

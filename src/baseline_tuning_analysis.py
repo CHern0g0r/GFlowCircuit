@@ -611,8 +611,10 @@ def analyze_stage(
     elif kind in {"budget", "extend"}:
         algorithm = str(protocol.stages[stage]["algorithm"])
         if kind == "budget":
-            screen_stage = str(protocol.stages[stage]["dependencies"][0])
-            top_profiles = list(dependency_payloads[screen_stage]["algorithms"][algorithm]["top_profiles"])
+            top_profiles = protocol.budget_profiles(
+                stage,
+                payloads=dependency_payloads or {},
+            )
         else:
             budget_stage = str(protocol.stages[stage]["dependencies"][0])
             top_profiles = list(dependency_payloads[budget_stage]["algorithms"][algorithm]["top_profiles"])

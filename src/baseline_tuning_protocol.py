@@ -190,7 +190,8 @@ class BaselineTuningProtocol:
                 if budget % trajectories:
                     raise ProtocolError(f"budget {budget} is not divisible for {algorithm}")
         for stage, cfg in self.stages.items():
-            for dependency in cfg.get("dependencies", []):
+            dependencies = [str(value) for value in cfg.get("dependencies", [])]
+            for dependency in dependencies:
                 if dependency not in self.stages:
                     raise ProtocolError(f"stage {stage} has unknown dependency {dependency}")
             for circuit in cfg["circuits"]:
@@ -207,6 +208,31 @@ class BaselineTuningProtocol:
                 if algorithm is not None
                 else set()
             )
+            explicit_profiles = cfg.get("profiles")
+            if explicit_profiles is not None:
+                if cfg.get("kind") != "budget" or algorithm is None:
+                    raise ProtocolError(
+                        f"stage {stage} explicit profiles require a budget algorithm"
+                    )
+                if dependencies:
+                    raise ProtocolError(
+                        f"stage {stage} cannot combine explicit profiles with dependencies"
+                    )
+                if not isinstance(explicit_profiles, list):
+                    raise ProtocolError(f"stage {stage} profiles must be a list")
+                selected_profiles = [str(value) for value in explicit_profiles]
+                if len(selected_profiles) != 2 or len(set(selected_profiles)) != 2:
+                    raise ProtocolError(
+                        f"stage {stage} must declare exactly two distinct profiles"
+                    )
+                if not set(selected_profiles) <= profile_ids:
+                    raise ProtocolError(
+                        f"stage {stage} profiles contains an unknown profile"
+                    )
+            elif cfg.get("kind") == "budget" and len(dependencies) != 1:
+                raise ProtocolError(
+                    f"stage {stage} budget requires one screen dependency or explicit profiles"
+                )
             raw_stage_interactions = cfg.get("interaction_profiles", [])
             if not isinstance(raw_stage_interactions, list):
                 raise ProtocolError(f"stage {stage} interaction_profiles must be a list")
@@ -371,6 +397,24 @@ class BaselineTuningProtocol:
         except (KeyError, TypeError) as exc:
             raise ProtocolError(f"selection unavailable for {stage}/{algorithm}") from exc
 
+    def budget_profiles(
+        self,
+        stage: str,
+        *,
+        payloads: Mapping[str, Any] | None = None,
+    ) -> list[str]:
+        """Resolve the two profiles for dependency-driven or standalone budget stages."""
+        cfg = self.stages[stage]
+        if str(cfg.get("kind")) != "budget":
+            raise ProtocolError(f"stage is not a budget stage: {stage}")
+        explicit = cfg.get("profiles")
+        if explicit is not None:
+            return [str(value) for value in explicit]
+        algorithm = str(cfg["algorithm"])
+        screen_stage = str(cfg["dependencies"][0])
+        selected = self._algorithm_selection(payloads or {}, screen_stage, algorithm)
+        return [str(value) for value in selected["top_profiles"]]
+
     def settings_for_stage(
         self,
         stage: str,
@@ -408,9 +452,7 @@ class BaselineTuningProtocol:
                 for profile in self.algorithms[algorithm]["profiles"]
             ]
         if kind == "budget":
-            screen_stage = str(cfg["dependencies"][0])
-            selected = self._algorithm_selection(payloads, screen_stage, algorithm)
-            profiles = [str(value) for value in selected["top_profiles"]]
+            profiles = self.budget_profiles(stage, payloads=payloads)
             return [
                 self.profile_setting(
                     algorithm=algorithm,
