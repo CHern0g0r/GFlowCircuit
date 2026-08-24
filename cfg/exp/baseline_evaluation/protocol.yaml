@@ -1,0 +1,142 @@
+version: 1
+campaign: baseline-evaluation-v1
+
+common:
+  num_steps: 20
+  available_actions: [0, 1, 2, 3, 4, 5, 6]
+  training_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  evaluation_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  sample_budgets: [10, 50, 100, 200]
+  max_samples_per_seed: 200
+  training_trajectories: 800
+  expected:
+    num_steps: 20
+    available_actions: [0, 1, 2, 3, 4, 5, 6]
+    encoder.type: hybrid
+    encoder.merge: concat
+    encoder.graph.type: zhu_gcn
+    encoder.graph.hidden_dim: 12
+    encoder.graph.out_dim: 4
+    encoder.graph.num_layers: 4
+    encoder.graph.dropout: 0.0
+    encoder.graph.pooling: mean
+    encoder.vector.source: zhu10
+    encoder.vector.out_dim: 28
+    encoder.vector.hidden_dims: []
+    policy.type: reinforce
+    head.type: mlp
+    head.hidden_dims: [32]
+    value.type: mlp
+    value.input: zhu10
+    value.hidden_dims: [32]
+    reward.type: diff_of_product
+    reward.c_size: 1
+    reward.c_depth: 1
+
+methods:
+  reinforce:
+    config_name: baseline_configs/reinforce
+    report_algorithm: reinforce
+    report_file: reinforce_report.json
+    trajectories_per_episode: 1
+    expected:
+      algorithm.name: reinforce
+      episodes: 800
+      eval_every: 50
+      seed: 0
+      paper_mode.num_runs: 10
+      paper_mode.infer_rollouts: 10
+      policy_learning_rate: 0.002
+      value_learning_rate: 0.003
+      gamma: 0.9
+      entropy_beta: 0.01
+      normalize_returns: false
+      clip_grad_norm_policy: null
+      clip_grad_norm_value: null
+      terminal_reward: false
+      baseline: zhu_resyn2
+      baseline_scale: 1.0
+  drills:
+    config_name: baseline_configs/drills
+    report_algorithm: drills_a2c
+    report_file: drills_a2c_report.json
+    trajectories_per_episode: 4
+    expected:
+      algorithm.name: drills_a2c
+      episodes: 200
+      eval_every: 50
+      seed: 0
+      paper_mode.num_runs: 10
+      paper_mode.infer_rollouts: 10
+      learning_rate: 0.0003
+      gamma: 0.9
+      algorithm.drills.trajectories_per_episode: 4
+      algorithm.drills.value_loss_coef: 1.0
+      algorithm.drills.entropy_beta: 0.0003
+      algorithm.drills.normalize_advantages: false
+      algorithm.drills.clip_grad_norm: null
+      algorithm.drills.depth_constraint_ratio: 1.0
+      baseline: zhu_resyn2
+      baseline_scale: 1.0
+  ppo:
+    config_name: baseline_configs/ppo
+    report_algorithm: ppo
+    report_file: ppo_report.json
+    trajectories_per_episode: 4
+    expected:
+      algorithm.name: ppo
+      episodes: 200
+      eval_every: 50
+      seed: 0
+      paper_mode.num_runs: 10
+      paper_mode.infer_rollouts: 10
+      learning_rate: 0.001
+      gamma: 0.9
+      algorithm.ppo.rollout_steps: 80
+      algorithm.ppo.ppo_epochs: 40
+      algorithm.ppo.minibatch_size: 64
+      algorithm.ppo.clip_eps: 0.2
+      algorithm.ppo.value_loss_coef: 0.5
+      algorithm.ppo.entropy_beta: 0.03
+      algorithm.ppo.normalize_advantages: true
+      algorithm.ppo.clip_grad_norm: null
+      algorithm.ppo.gae_lambda: 0.95
+      baseline: zhu_resyn2
+      baseline_scale: 1.0
+
+circuits:
+  C1355:
+    dataset_cfg: cfg/data/zhu2020/C1355.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/C1355.blif
+  C5315:
+    dataset_cfg: cfg/data/zhu2020/C5315.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/C5315.blif
+  adder:
+    dataset_cfg: cfg/data/epfl_arithmetic/adder.yaml
+    circuit_path: data/benchmarks/arithmetic/adder.aig
+  apex1:
+    dataset_cfg: cfg/data/zhu2020/apex1.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/apex1.blif
+  bc0:
+    dataset_cfg: cfg/data/zhu2020/bc0.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/bc0.blif
+  dalu:
+    dataset_cfg: cfg/data/zhu2020/dalu.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/dalu.blif
+  k2:
+    dataset_cfg: cfg/data/zhu2020/k2.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/k2.blif
+  max:
+    dataset_cfg: cfg/data/epfl_arithmetic/max.yaml
+    circuit_path: data/benchmarks/arithmetic/max.aig
+  multiplier:
+    dataset_cfg: cfg/data/epfl_arithmetic/multiplier.yaml
+    circuit_path: data/benchmarks/arithmetic/multiplier.aig
+
+martin:
+  project: gflowcircuit-baselines
+  artifact_base: /shared/home/fedor.chernogorskii/agent/art/gflowcircuit-baselines
+  job_names:
+    reinforce: gfc-baseline-reinforce-v1
+    drills: gfc-baseline-drills-v1
+    ppo: gfc-baseline-ppo-v1

@@ -1,0 +1,51 @@
+# @package _global_
+defaults:
+  - /default
+  - /environment: default
+  - /algorithm: reinforce
+  - override /encoder: hybrid_zhu
+  - _self_
+
+run_name: baseline_reinforce_i10
+dataset_cfg: cfg/data/zhu2020/i10.yaml
+
+policy:
+  type: reinforce
+head:
+  type: mlp
+  hidden_dims: [32]
+value:
+  type: mlp
+  input: zhu10
+  hidden_dims: [32]
+
+reward:
+  type: diff_of_product
+  c_size: 1
+  c_depth: 1
+
+# Selected profile: policy_lr_high. REINFORCE collects one trajectory per
+# episode, so 800 episodes give the requested 800 training trajectories.
+episodes: 800
+eval_every: 50
+train_ratio: 0.75
+terminal_reward: false
+
+seed: 0
+learning_rate: 0.001
+policy_learning_rate: 0.002
+value_learning_rate: 0.003
+gamma: 0.9
+baseline: zhu_resyn2
+baseline_scale: 1.0
+entropy_beta: 0.01
+clip_grad_norm_policy: null
+clip_grad_norm_value: null
+normalize_returns: false
+
+paper_mode:
+  per_circuit_mode: true
+  num_runs: 10
+  infer_rollouts: 10
+
+json_out: ${output_dir}/reinforce_report.json
