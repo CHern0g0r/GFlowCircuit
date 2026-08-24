@@ -35,7 +35,6 @@ EXPECTED_CIRCUITS = (
     "dalu",
     "k2",
     "max",
-    "multiplier",
 )
 IDENTITY_COLUMNS = ["method", "circuit_name", "training_seed", "evaluation_seed", "sample_id"]
 SAFE_COMPONENT = re.compile(r"^[A-Za-z0-9._-]+$")
@@ -324,8 +323,9 @@ def validate_protocol(
     compose: bool,
 ) -> dict[str, Any]:
     tasks = protocol.tasks()
-    if len(tasks) != 27 or len({task.task_id for task in tasks}) != 27:
-        raise ProtocolError("protocol must expand to 27 unique tasks")
+    expected_task_count = len(EXPECTED_METHODS) * len(EXPECTED_CIRCUITS)
+    if len(tasks) != expected_task_count or len({task.task_id for task in tasks}) != expected_task_count:
+        raise ProtocolError(f"protocol must expand to {expected_task_count} unique tasks")
     if compose:
         with TemporaryDirectory(prefix="gfc-baseline-eval-compose-") as directory:
             validate_compositions(

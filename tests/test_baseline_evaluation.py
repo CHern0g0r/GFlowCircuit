@@ -38,10 +38,10 @@ class BaselineEvaluationProtocolTests(unittest.TestCase):
     def test_matrix_and_rollout_counts(self) -> None:
         result = validate_protocol(self.protocol, python_executable="python", compose=False)
         self.assertEqual(self.protocol.methods, ("reinforce", "drills", "ppo"))
-        self.assertEqual(len(self.protocol.tasks()), 27)
-        self.assertEqual(len({task.task_id for task in self.protocol.tasks()}), 27)
-        self.assertEqual(result["trained_models"], 270)
-        self.assertEqual(result["unique_evaluation_rollouts"], 540_000)
+        self.assertEqual(len(self.protocol.tasks()), 24)
+        self.assertEqual(len({task.task_id for task in self.protocol.tasks()}), 24)
+        self.assertEqual(result["trained_models"], 240)
+        self.assertEqual(result["unique_evaluation_rollouts"], 480_000)
         self.assertEqual(result["sample_budgets"], [10, 50, 100, 200])
 
     def test_stable_circuit_index_and_minimal_train_overrides(self) -> None:

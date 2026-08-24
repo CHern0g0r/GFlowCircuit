@@ -129,9 +129,6 @@ circuits:
   max:
     dataset_cfg: cfg/data/epfl_arithmetic/max.yaml
     circuit_path: data/benchmarks/arithmetic/max.aig
-  multiplier:
-    dataset_cfg: cfg/data/epfl_arithmetic/multiplier.yaml
-    circuit_path: data/benchmarks/arithmetic/multiplier.aig
 
 martin:
   project: gflowcircuit-baselines

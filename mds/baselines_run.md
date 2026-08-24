@@ -2,8 +2,8 @@
 
 ## Scope
 
-This campaign compares three policy-gradient baselines on nine circuits:
-REINFORCE, DRiLLS-A2C, and PPO. It will run on the Martin SLURM cluster as 27
+This campaign compares three policy-gradient baselines on eight circuits:
+REINFORCE, DRiLLS-A2C, and PPO. It will run on the Martin SLURM cluster as 24
 jobs, with one job for each method/circuit pair. Each job trains ten models
 using training seeds 0 through 9.
 
@@ -35,8 +35,8 @@ evaluation contract:
 | Trained models per method/circuit | 10 |
 | Unique evaluation samples per method/circuit | 20,000 |
 
-Across the complete campaign, the 27 jobs train 270 models and generate
-540,000 unique post-training evaluation samples. The smaller best-of-N budgets
+Across the complete campaign, the 24 jobs train 240 models and generate
+480,000 unique post-training evaluation samples. The smaller best-of-N budgets
 reuse prefixes of the same samples and do not require additional rollouts.
 
 ## Methods
@@ -106,7 +106,6 @@ Configuration: `cfg/baseline_configs/ppo.yaml`
 | `dalu` | MCNC combinational | BLIF | `cfg/data/zhu2020/dalu.yaml` |
 | `k2` | MCNC combinational | BLIF | `cfg/data/zhu2020/k2.yaml` |
 | `max` | EPFL arithmetic | AIG | `cfg/data/epfl_arithmetic/max.yaml` |
-| `multiplier` | EPFL arithmetic | AIG | `cfg/data/epfl_arithmetic/multiplier.yaml` |
 
 ## Martin SLURM job matrix
 
@@ -124,4 +123,3 @@ training seeds and the evaluation contract defined above.
 | `dalu` | `reinforce_dalu` | `drills_dalu` | `ppo_dalu` |
 | `k2` | `reinforce_k2` | `drills_k2` | `ppo_k2` |
 | `max` | `reinforce_max` | `drills_max` | `ppo_max` |
-| `multiplier` | `reinforce_multiplier` | `drills_multiplier` | `ppo_multiplier` |
