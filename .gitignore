@@ -214,3 +214,6 @@ outputs/
 # /data/
 
 **/exp/
+!cfg/exp/
+!cfg/exp/gfn_baseline_comparison/
+!cfg/exp/gfn_baseline_comparison/protocol.yaml
