@@ -434,6 +434,105 @@ def _sample_experiment(
     return df
 
 
+def sample_paired_evaluation_seed(
+    *,
+    experiment_dir: Path,
+    circuit_path: Path,
+    method: str,
+    circuit_name: str,
+    num_samples: int,
+    evaluation_seed: int,
+    device: torch.device,
+    num_steps: int | None = None,
+) -> pd.DataFrame:
+    """Sample every training run with one shared, explicit evaluation seed.
+
+    Unlike the legacy CLI path, this function intentionally does not offset the
+    seed by training run. Reusing the same random stream across checkpoints
+    makes the resulting best-of-N comparisons paired by evaluation seed.
+    """
+    if int(num_samples) <= 0:
+        raise ValueError("num_samples must be positive")
+    config_path = experiment_dir / ".hydra" / "config.yaml"
+    cfg = _load_cfg(config_path)
+    resolved_num_steps = int(num_steps if num_steps is not None else cfg["num_steps"])
+    base_training_seed = int(cfg["seed"])
+
+    rows: list[dict[str, object]] = []
+    for run_id, checkpoint_path in _discover_run_checkpoints(experiment_dir):
+        training_seed = base_training_seed + int(run_id)
+        sampled = _sample_trajectories(
+            checkpoint_path=checkpoint_path,
+            cfg=cfg,
+            circuit_path=circuit_path,
+            num_steps=resolved_num_steps,
+            num_samples=int(num_samples),
+            device=device,
+            seed=int(evaluation_seed),
+            pcn_sampling_mode="target",
+            pcn_zero_variance_jitter=0.05,
+        )
+        for sample_id, sample_row in enumerate(tqdm(
+            sampled,
+            desc=f"Sampling {circuit_path.name} for run {run_id}, evaluation seed {evaluation_seed}",
+        )):
+            rows.append(
+                {
+                    "method": str(method),
+                    "circuit_name": str(circuit_name),
+                    "circuit": str(circuit_path),
+                    "run_id": int(run_id),
+                    "training_seed": training_seed,
+                    "evaluation_seed": int(evaluation_seed),
+                    "sample_id": int(sample_id),
+                    "source_checkpoint": str(checkpoint_path),
+                    **sample_row,
+                }
+            )
+
+    leading_columns = [
+        "method",
+        "circuit_name",
+        "circuit",
+        "run_id",
+        "training_seed",
+        "evaluation_seed",
+        "sample_id",
+        "size",
+        "depth",
+        "source_checkpoint",
+    ]
+    df = pd.DataFrame(rows)
+    other_columns = [column for column in df.columns if column not in leading_columns]
+    return df[leading_columns + other_columns]
+
+
+def evaluation_reference_row(
+    *,
+    circuit_path: Path,
+    method: str,
+    circuit_name: str,
+    num_steps: int,
+) -> dict[str, object]:
+    """Return the single original-circuit row used by aggregate point files."""
+    initial_size, initial_depth = _initial_circuit_metrics(
+        circuit_path=circuit_path,
+        num_steps=int(num_steps),
+    )
+    return {
+        "method": str(method),
+        "circuit_name": str(circuit_name),
+        "circuit": str(circuit_path),
+        "run_id": None,
+        "training_seed": None,
+        "evaluation_seed": None,
+        "sample_id": None,
+        "size": initial_size,
+        "depth": initial_depth,
+        "source_checkpoint": None,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Sample trajectories for all training runs in a Hydra experiment directory.",

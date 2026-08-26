@@ -1,0 +1,57 @@
+# @package _global_
+defaults:
+  - /default
+  - /environment: default
+  - /algorithm: ppo
+  - override /encoder: hybrid_zhu
+  - _self_
+
+run_name: baseline_ppo_i10
+dataset_cfg: cfg/data/zhu2020/i10.yaml
+
+policy:
+  type: reinforce
+head:
+  type: mlp
+  hidden_dims: [32]
+value:
+  type: mlp
+  input: zhu10
+  hidden_dims: [32]
+
+reward:
+  type: diff_of_product
+  c_size: 1
+  c_depth: 1
+
+# Selected profile: epochs_high. Each iteration collects 80 transitions,
+# equivalent to four complete 20-step trajectories. Thus, 200 iterations give
+# the requested 800 training trajectories.
+episodes: 200
+eval_every: 50
+train_ratio: 0.75
+
+seed: 0
+learning_rate: 0.001
+gamma: 0.9
+baseline: zhu_resyn2
+baseline_scale: 1.0
+
+algorithm:
+  ppo:
+    rollout_steps: 80
+    ppo_epochs: 40
+    minibatch_size: 64
+    clip_eps: 0.2
+    value_loss_coef: 0.5
+    entropy_beta: 0.03
+    normalize_advantages: true
+    clip_grad_norm: null
+    gae_lambda: 0.95
+
+paper_mode:
+  per_circuit_mode: true
+  num_runs: 10
+  infer_rollouts: 10
+
+json_out: ${output_dir}/ppo_report.json
