@@ -54,6 +54,7 @@ class ProtocolTests(unittest.TestCase):
         )
         self.assertIn("src.experiments.tb_logz_calibration", command)
         self.assertEqual(command[command.index("--variant") + 1], "zcal")
+        self.assertEqual(command[command.index("--log-z-learning-rate") + 1], "0.01")
         self.assertEqual(command[command.index("--max-trajectories") + 1], "800")
         self.assertEqual(command[command.index("--schedule-trajectories") + 1], "800")
         self.assertTrue(command[command.index("--circuit") + 1].endswith("adder.aig"))

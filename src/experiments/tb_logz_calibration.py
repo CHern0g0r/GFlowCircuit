@@ -790,6 +790,7 @@ def _add_run_parser(subparsers: Any) -> None:
     parser.add_argument("--circuit", required=True)
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--log-z-learning-rate", type=float)
     parser.add_argument("--max-trajectories", type=int, default=800)
     parser.add_argument("--schedule-trajectories", type=int, default=800)
     parser.add_argument("--milestones", type=int, nargs="+", default=[200, 400, 800])

@@ -323,6 +323,8 @@ def _training_command(
         str(int(seed)),
         "--output-dir",
         str(output_dir),
+        "--log-z-learning-rate",
+        str(float(gfn["log_z_learning_rate"])),
         "--max-trajectories",
         str(int(protocol.data["common"]["training_trajectories"])),
         "--schedule-trajectories",

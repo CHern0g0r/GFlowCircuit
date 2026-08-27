@@ -22,6 +22,7 @@ from src.experiments.tb_experiment_common import (
     differentiable_trajectory_scores,
     initialize_log_z,
 )
+from src.experiments.tb_logz_calibration import build_parser
 from src.experiments.tb_logz_calibration_report import (
     classify_calibration,
     oscillation_diagnostics,
@@ -54,6 +55,24 @@ def trajectory(*actions: int, log_reward: float = 0.0):
 
 
 class CalibrationMechanicsTest(unittest.TestCase):
+    def test_run_parser_accepts_explicit_log_z_learning_rate(self) -> None:
+        args = build_parser().parse_args(
+            [
+                "run",
+                "--variant",
+                "zcal",
+                "--circuit",
+                "bc0.blif",
+                "--seed",
+                "0",
+                "--output-dir",
+                "/tmp/out",
+                "--log-z-learning-rate",
+                "0.01",
+            ]
+        )
+        self.assertEqual(args.log_z_learning_rate, 0.01)
+
     def test_target_and_zcal_assignment(self) -> None:
         policy = TinyPolicy()
         trajectories = [trajectory(0, log_reward=1.0), trajectory(1, log_reward=3.0)]
