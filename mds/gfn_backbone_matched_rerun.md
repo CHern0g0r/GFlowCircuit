@@ -54,6 +54,13 @@ once; replay presentations are not counted again.
 checkpoints, and `gflownet_tb_report.json` within each circuit artifact
 directory.
 
+Post-training paired samples are produced separately by
+`python -m src.gfn_checkpoint_evaluation`. The checkpoint-only protocol evaluates
+training seeds 0–9 with evaluation seeds 0–9, materializes 200 ordered samples
+per pair, and publishes a validated `points.csv` in each circuit artifact. Raw
+seed files and exact `N = 10, 50, 100, 200` prefixes remain under a fresh
+`evaluation/attempt_NNN` directory.
+
 ## Local invocation
 
 For example, run `C1355` with:
