@@ -221,6 +221,7 @@ def _sample_trajectories(
     pcn_sampling_mode: str,
     pcn_zero_variance_jitter: float,
     gflownet_batch_size: int | None = None,
+    include_actions: bool = False,
 ) -> list[dict[str, object]]:
     loaded = _load_policy(
         checkpoint_path=checkpoint_path,
@@ -262,7 +263,13 @@ def _sample_trajectories(
                     **tb_params,
                 )
             for trajectory in trajectories:
-                metrics.append({"size": int(trajectory.final_size), "depth": int(trajectory.final_depth)})
+                row: dict[str, object] = {
+                    "size": int(trajectory.final_size),
+                    "depth": int(trajectory.final_depth),
+                }
+                if include_actions:
+                    row["actions"] = [int(step.action) for step in trajectory.steps]
+                metrics.append(row)
     elif algorithm_name == "drills_a2c":
         from src.algorithms.drills_a2c.sampler import sample_drills_a2c_trajectory
 
@@ -276,7 +283,13 @@ def _sample_trajectories(
                     sample_actions=True,
                     available_actions=available_actions,
                 )
-            metrics.append({"size": int(trajectory.final_size), "depth": int(trajectory.final_depth)})
+            row = {
+                "size": int(trajectory.final_size),
+                "depth": int(trajectory.final_depth),
+            }
+            if include_actions:
+                row["actions"] = [int(step.action) for step in trajectory.steps]
+            metrics.append(row)
     elif algorithm_name == "reinforce":
         from src.algorithms.reinforce.episode import run_reinforce_episode
         from src.baselines.resyn2 import build_resyn2_cache
@@ -303,7 +316,13 @@ def _sample_trajectories(
                     baseline=baseline,
                     available_actions=available_actions,
                 )
-            metrics.append({"size": int(episode["final_size"]), "depth": int(episode["final_depth"])})
+            row = {
+                "size": int(episode["final_size"]),
+                "depth": int(episode["final_depth"]),
+            }
+            if include_actions:
+                row["actions"] = [int(action) for action in episode["actions_applied"]]
+            metrics.append(row)
     elif algorithm_name == "ppo":
         from src.algorithms.ppo.sampler import sample_ppo_trajectory
         from src.baselines.resyn2 import build_resyn2_cache
@@ -335,7 +354,13 @@ def _sample_trajectories(
                     resyn2_baseline=resyn2_baseline,
                     available_actions=available_actions,
                 )
-            metrics.append({"size": int(trajectory.final_size), "depth": int(trajectory.final_depth)})
+            row = {
+                "size": int(trajectory.final_size),
+                "depth": int(trajectory.final_depth),
+            }
+            if include_actions:
+                row["actions"] = [int(transition.action) for transition in trajectory.transitions]
+            metrics.append(row)
     elif algorithm_name == "pcn":
         from src.algorithms.pcn.sampler import sample_pcn_trajectory
 
@@ -377,6 +402,8 @@ def _sample_trajectories(
                 "pcn_sampling_mode": pcn_sampling_mode,
                 "target_source": command.source,
             }
+            if include_actions:
+                row["actions"] = [int(step.action) for step in trajectory.steps]
             for objective_idx, target_value in enumerate(command.target_return.tolist()):
                 row[f"target_return_{objective_idx}"] = float(target_value)
             metrics.append(row)
