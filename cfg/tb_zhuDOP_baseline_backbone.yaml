@@ -1,0 +1,62 @@
+# @package _global_
+defaults:
+  - default
+  - environment: default
+  - algorithm: gflownet_tb
+  - override encoder: hybrid_zhu
+  - _self_
+
+run_name: tb_zhuDOP_baseline_backbone
+dataset_cfg: cfg/data/zhu2020/i10.yaml
+
+policy:
+  type: reinforce
+
+# This is the effective policy head used by the completed baseline campaign.
+# Keep the implicit MLP defaults explicit so backbone matching is auditable.
+head:
+  type: mlp
+  hidden_dims: [32]
+  activation: relu
+  layer_norm: false
+  dropout: 0.0
+
+reward:
+  type: diff_of_product
+  c_size: 1
+  c_depth: 1
+
+episodes: 200
+eval_every: 50
+train_ratio: 0.75
+seed: 0
+learning_rate: 0.001
+
+tb:
+  trajectories_per_episode: 4
+  reward_alpha: 4.0
+  reward_eps: 1.0e-8
+  reward_improvement_clip: 2.0
+  log_z_learning_rate: 0.01
+  log_z_initialization: calibrated
+  calibration_trajectories: 64
+  calibration_epsilon: 0.5
+  exploration_epsilon_enabled: true
+  exploration_epsilon_start: 0.5
+  exploration_epsilon_end: 0.01
+  exploration_warmup_episodes: 20
+  exploration_decay_episodes: null
+
+paper_mode:
+  per_circuit_mode: true
+  num_runs: 10
+  infer_rollouts: 10
+
+logging:
+  tensorboard: true
+
+discovery_metrics:
+  enabled: true
+  emit_every_trajectories: 50
+
+json_out: ${output_dir}/gflownet_tb_report.json

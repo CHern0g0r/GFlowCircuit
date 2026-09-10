@@ -1,0 +1,101 @@
+version: 1
+campaign: gfn-checkpoint-evaluation-v1
+method: gflownet_tb
+
+common:
+  num_steps: 20
+  available_actions: [0, 1, 2, 3, 4, 5, 6]
+  training_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  evaluation_seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+  sample_budgets: [10, 50, 100, 200]
+  max_samples_per_seed: 200
+  gflownet_batch_size: 20
+
+training:
+  artifact_root: /shared/home/fedor.chernogorskii/agent/art/gflowcircuit-gfn-backbone-matched/gfc-gfn-backbone-matched-v1
+  project_commit: d598a4b43af3f3abf174fbd3d4042988d751fc4b
+  config: cfg/tb_zhuDOP_baseline_backbone.yaml
+  config_sha256: d6d2fce910e84611f93b0b7c4ec1c2d85b9146cac1297e867786fc4806bb41d1
+  slurm_array_job_id: "22933"
+  report_file: gflownet_tb_report.json
+  expected:
+    algorithm.name: gflownet_tb
+    num_steps: 20
+    available_actions: [0, 1, 2, 3, 4, 5, 6]
+    encoder.type: hybrid
+    encoder.merge: concat
+    encoder.graph.type: zhu_gcn
+    encoder.graph.hidden_dim: 12
+    encoder.graph.out_dim: 4
+    encoder.graph.num_layers: 4
+    encoder.graph.dropout: 0.0
+    encoder.graph.pooling: mean
+    encoder.vector.source: zhu10
+    encoder.vector.out_dim: 28
+    encoder.vector.hidden_dims: []
+    head.type: mlp
+    head.hidden_dims: [32]
+    head.activation: relu
+    head.layer_norm: false
+    head.dropout: 0.0
+    reward.type: diff_of_product
+    reward.c_size: 1
+    reward.c_depth: 1
+    episodes: 200
+    eval_every: 50
+    seed: 0
+    learning_rate: 0.001
+    tb.trajectories_per_episode: 4
+    tb.reward_alpha: 4.0
+    tb.reward_eps: 1.0e-8
+    tb.reward_improvement_clip: 2.0
+    tb.log_z_learning_rate: 0.01
+    tb.log_z_initialization: calibrated
+    tb.calibration_trajectories: 64
+    tb.calibration_epsilon: 0.5
+    tb.exploration_epsilon_enabled: true
+    tb.exploration_epsilon_start: 0.5
+    tb.exploration_epsilon_end: 0.01
+    tb.exploration_warmup_episodes: 20
+    tb.exploration_decay_episodes: null
+    paper_mode.per_circuit_mode: true
+    paper_mode.num_runs: 10
+    paper_mode.infer_rollouts: 10
+
+circuits:
+  C1355:
+    dataset_cfg: cfg/data/zhu2020/C1355.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/C1355.blif
+    provenance_task_index: 1
+  C5315:
+    dataset_cfg: cfg/data/zhu2020/C5315.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/C5315.blif
+    provenance_task_index: 3
+  adder:
+    dataset_cfg: cfg/data/epfl_arithmetic/adder.yaml
+    circuit_path: data/benchmarks/arithmetic/adder.aig
+    provenance_task_index: 0
+  apex1:
+    dataset_cfg: cfg/data/zhu2020/apex1.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/apex1.blif
+    provenance_task_index: 0
+  bc0:
+    dataset_cfg: cfg/data/zhu2020/bc0.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/bc0.blif
+    provenance_task_index: 1
+  dalu:
+    dataset_cfg: cfg/data/zhu2020/dalu.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/dalu.blif
+    provenance_task_index: 2
+  k2:
+    dataset_cfg: cfg/data/zhu2020/k2.yaml
+    circuit_path: data/hdl-benchmarks/mcnc/Combinational/blif/k2.blif
+    provenance_task_index: 2
+  max:
+    dataset_cfg: cfg/data/epfl_arithmetic/max.yaml
+    circuit_path: data/benchmarks/arithmetic/max.aig
+    provenance_task_index: 3
+
+martin:
+  project: gflowcircuit-gfn-backbone-matched-eval
+  job_name: gfc-gfn-backbone-matched-eval-v1
