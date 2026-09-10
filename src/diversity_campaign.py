@@ -101,10 +101,7 @@ def run_task(protocol: dict, *, method: str, circuit: str, artifact_root: Path,
     command = [python, "-m", "src.run", "--config-name", config, *overrides(protocol, method, circuit, train_dir)]
     status = {"complete": False, "training_complete": False, "sampling_complete": False,
               "mapping_complete": False, "command": command, "protocol": protocol,
-              "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO, text=True).strip(),
               "slurm_job_id": os.environ.get("SLURM_JOB_ID")}
-    # Include dirty tracked changes so local trials are auditable without asserting an immutable commit.
-    (attempt / "working_tree.patch").write_bytes(subprocess.check_output(["git", "diff", "HEAD"], cwd=REPO))
     write_json(attempt / "status.json", status)
     try:
         start = time.monotonic()
