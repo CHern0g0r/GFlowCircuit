@@ -400,6 +400,18 @@ def main(cfg: DictConfig) -> None:
                 tb_log_z_learning_rate = 10.0 * float(cfg.learning_rate)
             else:
                 tb_log_z_learning_rate = float(tb_log_z_learning_rate_cfg)
+            tb_log_z_initialization_cfg = OmegaConf.select(tb_cfg, "log_z_initialization")
+            tb_log_z_initialization = str(
+                "zero" if tb_log_z_initialization_cfg is None else tb_log_z_initialization_cfg
+            )
+            tb_calibration_trajectories_cfg = OmegaConf.select(tb_cfg, "calibration_trajectories")
+            tb_calibration_trajectories = int(
+                0 if tb_calibration_trajectories_cfg is None else tb_calibration_trajectories_cfg
+            )
+            tb_calibration_epsilon_cfg = OmegaConf.select(tb_cfg, "calibration_epsilon")
+            tb_calibration_epsilon = float(
+                0.5 if tb_calibration_epsilon_cfg is None else tb_calibration_epsilon_cfg
+            )
             tb_exploration_epsilon_enabled_cfg = OmegaConf.select(tb_cfg, "exploration_epsilon_enabled")
             tb_exploration_epsilon_enabled = (
                 True if tb_exploration_epsilon_enabled_cfg is None else bool(tb_exploration_epsilon_enabled_cfg)
@@ -439,6 +451,9 @@ def main(cfg: DictConfig) -> None:
                 exploration_warmup_episodes=tb_exploration_warmup_episodes,
                 exploration_decay_episodes=tb_exploration_decay_episodes,
                 best_of_eval_rollouts=best_of_rollouts,
+                log_z_initialization=tb_log_z_initialization,
+                calibration_trajectories=tb_calibration_trajectories,
+                calibration_epsilon=tb_calibration_epsilon,
                 discovery_metrics_enabled=discovery_enabled,
                 discovery_emit_every_trajectories=discovery_emit_every,
             )
@@ -456,12 +471,14 @@ def main(cfg: DictConfig) -> None:
                 seed=run_seed,
                 policy=policy,
                 value_net=None,
+                extra_payload={"tb_training": train_out["training_summary"]},
             )
             runs.append(
                 {
                     "run_idx": run_idx,
                     "seed": run_seed,
                     "history": train_out["history"],
+                    "training_summary": train_out["training_summary"],
                     "discovery_front": train_out["discovery_front"],
                     "discovery_metrics": train_out["discovery_metrics"],
                     "final_eval": final_eval,

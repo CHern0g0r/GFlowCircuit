@@ -46,9 +46,12 @@ def _resolve_experiment_dir(*, experiment: str, outputs_root: Path) -> Path:
 
 
 def _discover_run_checkpoints(experiment_dir: Path) -> list[tuple[int, Path]]:
-    saved_models = experiment_dir / "saved_models"
+    return _discover_run_checkpoints_from_root(experiment_dir / "saved_models")
+
+
+def _discover_run_checkpoints_from_root(saved_models: Path) -> list[tuple[int, Path]]:
     if not saved_models.is_dir():
-        raise FileNotFoundError(f"No saved_models directory in experiment: {saved_models}")
+        raise FileNotFoundError(f"No saved_models directory: {saved_models}")
 
     runs: list[tuple[int, Path]] = []
     for run_dir in sorted(saved_models.iterdir()):
@@ -217,6 +220,8 @@ def _sample_trajectories(
     seed: int,
     pcn_sampling_mode: str,
     pcn_zero_variance_jitter: float,
+    gflownet_batch_size: int | None = None,
+    include_actions: bool = False,
 ) -> list[dict[str, object]]:
     loaded = _load_policy(
         checkpoint_path=checkpoint_path,
@@ -241,18 +246,30 @@ def _sample_trajectories(
         from src.algorithms.gflownet_tb.sampler import sample_tb_trajectories
 
         tb_params = _tb_reward_params(cfg)
-        with torch.no_grad():
-            trajectories = sample_tb_trajectories(
-                file_paths=[str(circuit_path) for _ in range(max(1, int(num_samples)))],
-                num_steps=num_steps,
-                policy=policy,
-                reward_class=reward_class,
-                sample_actions=True,
-                available_actions=available_actions,
-                **tb_params,
-            )
-        for trajectory in trajectories:
-            metrics.append({"size": int(trajectory.final_size), "depth": int(trajectory.final_depth)})
+        sample_count = max(1, int(num_samples))
+        batch_size = sample_count if gflownet_batch_size is None else int(gflownet_batch_size)
+        if batch_size <= 0:
+            raise ValueError("gflownet_batch_size must be positive")
+        for offset in range(0, sample_count, batch_size):
+            current_batch_size = min(batch_size, sample_count - offset)
+            with torch.no_grad():
+                trajectories = sample_tb_trajectories(
+                    file_paths=[str(circuit_path) for _ in range(current_batch_size)],
+                    num_steps=num_steps,
+                    policy=policy,
+                    reward_class=reward_class,
+                    sample_actions=True,
+                    available_actions=available_actions,
+                    **tb_params,
+                )
+            for trajectory in trajectories:
+                row: dict[str, object] = {
+                    "size": int(trajectory.final_size),
+                    "depth": int(trajectory.final_depth),
+                }
+                if include_actions:
+                    row["actions"] = [int(step.action) for step in trajectory.steps]
+                metrics.append(row)
     elif algorithm_name == "drills_a2c":
         from src.algorithms.drills_a2c.sampler import sample_drills_a2c_trajectory
 
@@ -266,7 +283,13 @@ def _sample_trajectories(
                     sample_actions=True,
                     available_actions=available_actions,
                 )
-            metrics.append({"size": int(trajectory.final_size), "depth": int(trajectory.final_depth)})
+            row = {
+                "size": int(trajectory.final_size),
+                "depth": int(trajectory.final_depth),
+            }
+            if include_actions:
+                row["actions"] = [int(step.action) for step in trajectory.steps]
+            metrics.append(row)
     elif algorithm_name == "reinforce":
         from src.algorithms.reinforce.episode import run_reinforce_episode
         from src.baselines.resyn2 import build_resyn2_cache
@@ -293,7 +316,13 @@ def _sample_trajectories(
                     baseline=baseline,
                     available_actions=available_actions,
                 )
-            metrics.append({"size": int(episode["final_size"]), "depth": int(episode["final_depth"])})
+            row = {
+                "size": int(episode["final_size"]),
+                "depth": int(episode["final_depth"]),
+            }
+            if include_actions:
+                row["actions"] = [int(action) for action in episode["actions_applied"]]
+            metrics.append(row)
     elif algorithm_name == "ppo":
         from src.algorithms.ppo.sampler import sample_ppo_trajectory
         from src.baselines.resyn2 import build_resyn2_cache
@@ -325,7 +354,13 @@ def _sample_trajectories(
                     resyn2_baseline=resyn2_baseline,
                     available_actions=available_actions,
                 )
-            metrics.append({"size": int(trajectory.final_size), "depth": int(trajectory.final_depth)})
+            row = {
+                "size": int(trajectory.final_size),
+                "depth": int(trajectory.final_depth),
+            }
+            if include_actions:
+                row["actions"] = [int(transition.action) for transition in trajectory.transitions]
+            metrics.append(row)
     elif algorithm_name == "pcn":
         from src.algorithms.pcn.sampler import sample_pcn_trajectory
 
@@ -367,6 +402,8 @@ def _sample_trajectories(
                 "pcn_sampling_mode": pcn_sampling_mode,
                 "target_source": command.source,
             }
+            if include_actions:
+                row["actions"] = [int(step.action) for step in trajectory.steps]
             for objective_idx, target_value in enumerate(command.target_return.tolist()):
                 row[f"target_return_{objective_idx}"] = float(target_value)
             metrics.append(row)
@@ -451,15 +488,48 @@ def sample_paired_evaluation_seed(
     seed by training run. Reusing the same random stream across checkpoints
     makes the resulting best-of-N comparisons paired by evaluation seed.
     """
+    return sample_paired_evaluation_seed_from_paths(
+        config_path=experiment_dir / ".hydra" / "config.yaml",
+        saved_models_dir=experiment_dir / "saved_models",
+        circuit_path=circuit_path,
+        method=method,
+        circuit_name=circuit_name,
+        num_samples=num_samples,
+        evaluation_seed=evaluation_seed,
+        device=device,
+        num_steps=num_steps,
+        run_checkpoints=_discover_run_checkpoints(experiment_dir),
+    )
+
+
+def sample_paired_evaluation_seed_from_paths(
+    *,
+    config_path: Path,
+    saved_models_dir: Path,
+    circuit_path: Path,
+    method: str,
+    circuit_name: str,
+    num_samples: int,
+    evaluation_seed: int,
+    device: torch.device,
+    num_steps: int | None = None,
+    gflownet_batch_size: int | None = None,
+    run_checkpoints: list[tuple[int, Path]] | None = None,
+) -> pd.DataFrame:
+    """Sample paired checkpoints when Hydra config and models have separate roots."""
     if int(num_samples) <= 0:
         raise ValueError("num_samples must be positive")
-    config_path = experiment_dir / ".hydra" / "config.yaml"
     cfg = _load_cfg(config_path)
     resolved_num_steps = int(num_steps if num_steps is not None else cfg["num_steps"])
     base_training_seed = int(cfg["seed"])
 
     rows: list[dict[str, object]] = []
-    for run_id, checkpoint_path in _discover_run_checkpoints(experiment_dir):
+    checkpoints = (
+        _discover_run_checkpoints_from_root(saved_models_dir)
+        if run_checkpoints is None
+        else run_checkpoints
+    )
+    for run_id, checkpoint_path in checkpoints:
         training_seed = base_training_seed + int(run_id)
         sampled = _sample_trajectories(
             checkpoint_path=checkpoint_path,
@@ -471,6 +541,7 @@ def sample_paired_evaluation_seed(
             seed=int(evaluation_seed),
             pcn_sampling_mode="target",
             pcn_zero_variance_jitter=0.05,
+            gflownet_batch_size=gflownet_batch_size,
         )
         for sample_id, sample_row in enumerate(tqdm(
             sampled,

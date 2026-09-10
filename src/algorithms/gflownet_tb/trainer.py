@@ -92,6 +92,49 @@ def _tb_exploration_epsilon(
     return epsilon_start + progress * (epsilon_end - epsilon_start)
 
 
+def _cached_trajectory_scores(
+    policy: TBGFlowNetPolicy,
+    trajectories: list[Any],
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Rescore cached trajectory actions under the current policy."""
+    if not trajectories:
+        raise ValueError("cached trajectories must be non-empty")
+    log_pf_values: list[torch.Tensor] = []
+    for trajectory in trajectories:
+        observations = [step.observation for step in trajectory.steps]
+        legal_actions = [list(step.legal_actions) for step in trajectory.steps]
+        actions = [int(step.action) for step in trajectory.steps]
+        logits = policy(observations)
+        log_pf_values.append(
+            policy.log_prob_legal_batch(logits, legal_actions, actions).sum()
+        )
+    log_pf = torch.stack(log_pf_values)
+    log_pb = torch.as_tensor(
+        [float(item.log_pb_sum.detach().cpu()) for item in trajectories],
+        dtype=log_pf.dtype,
+        device=log_pf.device,
+    )
+    log_r = torch.as_tensor(
+        [float(item.log_reward) for item in trajectories],
+        dtype=log_pf.dtype,
+        device=log_pf.device,
+    )
+    return log_pf, log_pb, log_r
+
+
+def calibrated_log_z_target(
+    policy: TBGFlowNetPolicy,
+    trajectories: list[Any],
+) -> float:
+    """Return mean(log R + log P_B - log P_F) for a fixed calibration set."""
+    with torch.no_grad():
+        log_pf, log_pb, log_r = _cached_trajectory_scores(policy, trajectories)
+        target = (log_r + log_pb - log_pf).mean()
+    if not bool(torch.isfinite(target)):
+        raise FloatingPointError("calibrated logZ target is non-finite")
+    return float(target.detach().cpu())
+
+
 class TBGFlowNetTrainer:
     def __init__(
         self,
@@ -134,9 +177,28 @@ class TBGFlowNetTrainer:
         exploration_warmup_episodes: int,
         exploration_decay_episodes: int | None,
         best_of_eval_rollouts: int,
+        log_z_initialization: str = "zero",
+        calibration_trajectories: int = 0,
+        calibration_epsilon: float = 0.5,
         discovery_metrics_enabled: bool = True,
         discovery_emit_every_trajectories: int = 50,
     ) -> dict[str, Any]:
+        initialization = str(log_z_initialization).lower()
+        if initialization not in {"zero", "calibrated"}:
+            raise ValueError("log_z_initialization must be 'zero' or 'calibrated'")
+        batch_size = max(1, int(trajectories_per_episode))
+        calibration_count = int(calibration_trajectories)
+        calibration_epsilon = _validate_probability("calibration_epsilon", calibration_epsilon)
+        if initialization == "calibrated":
+            if calibration_count <= 0 or calibration_count % batch_size:
+                raise ValueError(
+                    "calibration_trajectories must be positive and divisible by trajectories_per_episode"
+                )
+            if calibration_count > int(episodes) * batch_size:
+                raise ValueError("calibration trajectories exceed the training trajectory budget")
+        elif calibration_count != 0:
+            raise ValueError("calibration_trajectories must be zero when logZ initialization is zero")
+
         optimizer = _build_tb_optimizer(
             self.policy,
             learning_rate=learning_rate,
@@ -151,6 +213,43 @@ class TBGFlowNetTrainer:
             tensorboard_logger=self._tb,
         )
 
+        cached_trajectories: list[Any] = []
+        calibration_target: float | None = None
+        if initialization == "calibrated":
+            calibration_circuits = [
+                self.train_circuits[int(self.rng.integers(0, len(self.train_circuits)))]
+                for _ in range(calibration_count)
+            ]
+            with torch.no_grad():
+                cached_trajectories = sample_tb_trajectories(
+                    file_paths=calibration_circuits,
+                    num_steps=num_steps,
+                    policy=self.policy,
+                    reward_class=self.reward_class,
+                    reward_alpha=reward_alpha,
+                    reward_eps=reward_eps,
+                    reward_improvement_clip=reward_improvement_clip,
+                    sample_actions=True,
+                    available_actions=self.available_actions,
+                    epsilon_uniform=calibration_epsilon,
+                )
+            for trajectory in cached_trajectories:
+                record_training_trajectory(discovery, trajectory)
+            calibration_target = calibrated_log_z_target(self.policy, cached_trajectories)
+            with torch.no_grad():
+                self.policy.log_z.fill_(calibration_target)
+            if self._tb is not None:
+                self._tb.add_scalars(
+                    0,
+                    {
+                        "train/log_z_calibration_target": calibration_target,
+                        "train/log_z_initial": float(self.policy.log_z.detach().cpu()),
+                        "train/calibration_trajectories": float(calibration_count),
+                        "train/training_trajectories": float(calibration_count),
+                        "train/training_presentations": 0.0,
+                    },
+                )
+
         for ep in trange(1, episodes + 1, desc="Training TB"):
             exploration_epsilon = _tb_exploration_epsilon(
                 episode=ep,
@@ -161,29 +260,42 @@ class TBGFlowNetTrainer:
                 warmup_episodes=exploration_warmup_episodes,
                 decay_episodes=exploration_decay_episodes,
             )
-            batch_size = max(1, int(trajectories_per_episode))
-            circuits = [
-                self.train_circuits[int(self.rng.integers(0, len(self.train_circuits)))] for _ in range(batch_size)
-            ]
-            trajectories = sample_tb_trajectories(
-                file_paths=circuits,
-                num_steps=num_steps,
-                policy=self.policy,
-                reward_class=self.reward_class,
-                reward_alpha=reward_alpha,
-                reward_eps=reward_eps,
-                reward_improvement_clip=reward_improvement_clip,
-                sample_actions=True,
-                available_actions=self.available_actions,
-                epsilon_uniform=exploration_epsilon,
-            )
-            for trajectory in trajectories:
-                record_training_trajectory(discovery, trajectory)
+            calibration_updates = calibration_count // batch_size
+            uses_calibration = initialization == "calibrated" and ep <= calibration_updates
+            if uses_calibration:
+                start = (ep - 1) * batch_size
+                trajectories = cached_trajectories[start : start + batch_size]
+                log_pf, log_pb, log_r = _cached_trajectory_scores(self.policy, trajectories)
+                effective_epsilon = calibration_epsilon
+            else:
+                circuits = [
+                    self.train_circuits[int(self.rng.integers(0, len(self.train_circuits)))]
+                    for _ in range(batch_size)
+                ]
+                trajectories = sample_tb_trajectories(
+                    file_paths=circuits,
+                    num_steps=num_steps,
+                    policy=self.policy,
+                    reward_class=self.reward_class,
+                    reward_alpha=reward_alpha,
+                    reward_eps=reward_eps,
+                    reward_improvement_clip=reward_improvement_clip,
+                    sample_actions=True,
+                    available_actions=self.available_actions,
+                    epsilon_uniform=exploration_epsilon,
+                )
+                for trajectory in trajectories:
+                    record_training_trajectory(discovery, trajectory)
+                log_pf = torch.stack([t.log_pf_sum for t in trajectories])
+                log_pb = torch.stack([t.log_pb_sum for t in trajectories])
+                log_r = torch.tensor(
+                    [t.log_reward for t in trajectories],
+                    dtype=torch.float32,
+                    device=self.device,
+                )
+                effective_epsilon = exploration_epsilon
 
             optimizer.zero_grad(set_to_none=True)
-            log_pf = torch.stack([t.log_pf_sum for t in trajectories])
-            log_pb = torch.stack([t.log_pb_sum for t in trajectories])
-            log_r = torch.tensor([t.log_reward for t in trajectories], dtype=torch.float32, device=self.device)
             loss = trajectory_balance_loss(
                 log_z=self.policy.log_z,
                 log_pf_sums=log_pf,
@@ -196,6 +308,9 @@ class TBGFlowNetTrainer:
             mean_final_return = float(np.mean([t.final_return for t in trajectories])) if trajectories else 0.0
             mean_terminal_reward = float(np.mean([t.terminal_reward for t in trajectories])) if trajectories else 0.0
             mean_traj_len = float(np.mean([len(t.steps) for t in trajectories])) if trajectories else 0.0
+            new_trajectory_count = max(0, ep - calibration_updates) * batch_size
+            unique_trajectory_count = calibration_count + new_trajectory_count
+            presentation_count = ep * batch_size
 
             if self._tb is not None:
                 self._tb.add_scalars(
@@ -206,7 +321,12 @@ class TBGFlowNetTrainer:
                         "train/final_return": mean_final_return,
                         "train/terminal_reward": mean_terminal_reward,
                         "train/trajectory_len": mean_traj_len,
-                        "train/exploration_epsilon": exploration_epsilon,
+                        "train/exploration_epsilon": effective_epsilon,
+                        "train/source_is_calibration": float(uses_calibration),
+                        "train/training_trajectories": float(unique_trajectory_count),
+                        "train/training_presentations": float(presentation_count),
+                        "train/new_on_policy_trajectories": float(new_trajectory_count),
+                        "train/calibration_trajectories": float(calibration_count),
                     },
                 )
 
@@ -223,7 +343,10 @@ class TBGFlowNetTrainer:
                     "train_policy_loss": float(loss.item()),
                     "train_log_z": float(self.policy.log_z.detach().item()),
                     "train_final_return": mean_final_return,
-                    "train_exploration_epsilon": exploration_epsilon,
+                    "train_exploration_epsilon": effective_epsilon,
+                    "train_source": "calibration" if uses_calibration else "new_on_policy",
+                    "training_trajectories": unique_trajectory_count,
+                    "training_presentations": presentation_count,
                     "test_mean_final_return": eval_summary["mean_final_return"],
                     "test_mean_comparable_return": eval_summary["mean_comparable_return"],
                     "test_mean_size_reduction": eval_summary["mean_size_reduction"],
@@ -262,7 +385,20 @@ class TBGFlowNetTrainer:
         discovery_out = finalize_training_discovery(discovery)
         if self._tb is not None:
             self._tb.close()
-        return {"history": history, **discovery_out}
+        return {
+            "history": history,
+            "training_summary": {
+                "log_z_initialization": initialization,
+                "calibration_target": calibration_target,
+                "calibration_trajectories": calibration_count,
+                "new_on_policy_trajectories": max(0, int(episodes) - calibration_count // batch_size)
+                * batch_size,
+                "training_trajectories": int(episodes) * batch_size,
+                "training_presentations": int(episodes) * batch_size,
+                "optimizer_updates": int(episodes),
+            },
+            **discovery_out,
+        }
 
     def evaluate(
         self,
