@@ -38,6 +38,8 @@ train_ratio: 0.75
 seed: 0
 # Opt-in for new reproducible campaigns; legacy runs retain their RNG behavior.
 seed_training_rng: false
+# auto preserves legacy device selection; campaigns explicitly select cpu/cuda.
+training_device: auto
 learning_rate: 0.001
 policy_learning_rate: null
 value_learning_rate: null

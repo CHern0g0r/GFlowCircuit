@@ -43,7 +43,7 @@ def main() -> None:
             command = [sys.executable, "-c",
                        "import numpy,torch,runpy; torch.manual_seed(123); runpy.run_module('src.run',run_name='__main__')",
                        "--config-name", config, "dataset_cfg=cfg/data/zhu2020/C1355.yaml",
-                       "seed_training_rng=true", "num_steps=2", "episodes=2", "eval_every=2", "paper_mode.num_runs=1",
+                       "seed_training_rng=true", "training_device=cpu", "num_steps=2", "episodes=2", "eval_every=2", "paper_mode.num_runs=1",
                        "paper_mode.infer_rollouts=1", "logging.tensorboard=false",
                        "discovery_metrics.emit_every_trajectories=1",
                        f"discovery_metrics.archive_enabled={str(enabled).lower()}",

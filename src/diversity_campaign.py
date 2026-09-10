@@ -46,6 +46,34 @@ def load_protocol(path: Path) -> dict:
     return data
 
 
+def smoke_protocol(protocol: dict) -> dict:
+    """Explicit test-only reduction; production protocol loading stays strict."""
+    import copy
+    protocol = copy.deepcopy(protocol)
+    protocol["smoke"] = True
+    protocol["archive"]["emit_every_trajectories"] = 1
+    protocol["mapping"]["curve_permutations"] = 2
+    for key in ("baseline", "gflownet"):
+        protocol[key]["common"].update(training_seeds=[0], evaluation_seeds=[0],
+                                      sample_budgets=[2, 4], max_samples_per_seed=4,
+                                      training_trajectories=4, num_steps=2)
+    return protocol
+
+
+def smoke_overrides(method: str) -> dict:
+    extra = {"num_steps": 2, "episodes": 4 if method == "reinforce" else 2,
+             "eval_every": 2, "paper_mode.num_runs": 1, "paper_mode.infer_rollouts": 1,
+             "logging.tensorboard": False}
+    if method == "drills":
+        extra["algorithm.drills.trajectories_per_episode"] = 2
+    elif method == "ppo":
+        extra.update({"algorithm.ppo.rollout_steps": 4, "algorithm.ppo.ppo_epochs": 1,
+                      "algorithm.ppo.minibatch_size": 4})
+    elif method == "gflownet_tb":
+        extra.update({"tb.trajectories_per_episode": 2, "tb.calibration_trajectories": 2})
+    return extra
+
+
 def task_config(protocol: dict, method: str, circuit: str) -> tuple[str, dict, str]:
     if method not in protocol["methods"] or circuit not in protocol["baseline"]["circuits"]:
         raise ValueError("Unknown method/circuit")
@@ -57,12 +85,15 @@ def task_config(protocol: dict, method: str, circuit: str) -> tuple[str, dict, s
 
 
 def overrides(protocol: dict, method: str, circuit: str, train_dir: Path) -> list[str]:
-    return [f"dataset_cfg={protocol['baseline']['circuits'][circuit]['dataset_cfg']}",
+    result = [f"dataset_cfg={protocol['baseline']['circuits'][circuit]['dataset_cfg']}",
             f"run_name=diversity_{method}_{circuit}", f"hydra.run.dir={train_dir}",
             f"output_dir={train_dir}", "discovery_metrics.enabled=true",
             "seed_training_rng=true",
             "discovery_metrics.archive_enabled=true",
             f"discovery_metrics.emit_every_trajectories={protocol['archive']['emit_every_trajectories']}"]
+    if protocol.get("smoke"):
+        result += [f"{k}={str(v).lower() if isinstance(v, bool) else v}" for k, v in smoke_overrides(method).items()]
+    return result
 
 
 def validate(protocol: dict) -> dict:
@@ -75,20 +106,27 @@ def validate(protocol: dict) -> dict:
             for circuit in protocol["baseline"]["circuits"]:
                 config, expected, _ = task_config(protocol, method, circuit)
                 cfg = compose(config_name=config, overrides=overrides(protocol, method, circuit, Path("/tmp/diversity-validation")))
+                expected = {**expected, **(smoke_overrides(method) if protocol.get("smoke") else {})}
                 for key, value in expected.items():
                     if OmegaConf.select(cfg, key) != value:
                         raise ValueError(f"{method}/{circuit}: {key} expected {value}, got {OmegaConf.select(cfg, key)}")
                 count += 1
-    return {"valid": True, "tasks": count, "training_seeds_per_task": 10,
-            "max_samples_per_evaluation_seed": 200}
+    return {"valid": True, "tasks": count, "training_seeds_per_task": len(protocol["baseline"]["common"]["training_seeds"]),
+            "max_samples_per_evaluation_seed": protocol["baseline"]["common"]["max_samples_per_seed"]}
 
 
 def run_task(protocol: dict, *, method: str, circuit: str, artifact_root: Path,
-             abc_path: Path, device: str = "cpu", python: str = sys.executable) -> Path:
-    from src.diversity_evaluation import evaluate
+             abc_path: Path, device: str = "cpu", python: str = sys.executable,
+             stage: str = "all") -> Path:
+    from src.campaign_workers import attempt_identity, seal_inputs
     from src.sample_exp import sample_paired_evaluation_seed_from_paths
     import torch
 
+    if stage not in {"all", "train-sample"}:
+        raise ValueError("Invalid task stage")
+    if device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but unavailable")
+    common = protocol["baseline"]["common"]
     config, _, report_file = task_config(protocol, method, circuit)
     task_root = artifact_root.resolve() / f"{method}_{circuit}"
     task_root.mkdir(parents=True, exist_ok=True)
@@ -98,9 +136,10 @@ def run_task(protocol: dict, *, method: str, circuit: str, artifact_root: Path,
     attempt = task_root / f"attempt_{index:03d}"
     attempt.mkdir()
     train_dir = attempt / "train"
-    command = [python, "-m", "src.run", "--config-name", config, *overrides(protocol, method, circuit, train_dir)]
+    command = [python, "-m", "src.run", "--config-name", config, *overrides(protocol, method, circuit, train_dir), f"training_device={device}"]
     status = {"complete": False, "training_complete": False, "sampling_complete": False,
               "mapping_complete": False, "command": command, "protocol": protocol,
+              "identity": attempt_identity(protocol, method, circuit, abc_path, device),
               "slurm_job_id": os.environ.get("SLURM_JOB_ID")}
     write_json(attempt / "status.json", status)
     try:
@@ -110,11 +149,11 @@ def run_task(protocol: dict, *, method: str, circuit: str, artifact_root: Path,
         status["training_seconds"] = time.monotonic() - start
         checkpoints = sorted((train_dir / "saved_models").glob("run_*/last.pt"))
         archives = sorted((train_dir / "pareto_archives").glob("run_*/*/manifest.json"))
-        if len(checkpoints) != 10 or len(archives) != 10 or not (train_dir / report_file).is_file():
-            raise ValueError("Expected ten trained checkpoints and circuit archives")
+        if len(checkpoints) != len(common["training_seeds"]) or len(archives) != len(common["training_seeds"]) or not (train_dir / report_file).is_file():
+            raise ValueError("Incomplete trained checkpoints and circuit archives")
         for path in archives:
             archive = json.loads(path.read_text())
-            if not archive["complete"] or archive["snapshot"]["local_trajectory"] != 800:
+            if not archive["complete"] or archive["snapshot"]["local_trajectory"] != common["training_trajectories"]:
                 raise ValueError(f"Incomplete training budget/archive: {path}")
         status["training_complete"] = True
         write_json(attempt / "status.json", status)
@@ -123,8 +162,8 @@ def run_task(protocol: dict, *, method: str, circuit: str, artifact_root: Path,
             frame = sample_paired_evaluation_seed_from_paths(
                 config_path=train_dir / ".hydra/config.yaml", saved_models_dir=train_dir / "saved_models",
                 circuit_path=REPO / protocol["baseline"]["circuits"][circuit]["circuit_path"],
-                method=method, circuit_name=circuit, num_samples=200, evaluation_seed=seed,
-                device=torch.device(device), num_steps=20,
+                method=method, circuit_name=circuit, num_samples=common["max_samples_per_seed"], evaluation_seed=seed,
+                device=torch.device(device), num_steps=common["num_steps"],
                 gflownet_batch_size=protocol["gflownet"]["common"]["gflownet_batch_size"],
                 artifact_root=attempt / "final_sampling")
             frame.to_csv(attempt / f"samples_seed_{seed}.csv", index=False)
@@ -132,17 +171,13 @@ def run_task(protocol: dict, *, method: str, circuit: str, artifact_root: Path,
                 frame.loc[frame.sample_id < budget].to_csv(attempt / f"samples_seed_{seed}_n{budget}.csv", index=False)
         status["sampling_seconds"] = time.monotonic() - start
         status["sampling_complete"] = True
+        seal_inputs(attempt, status)
         write_json(attempt / "status.json", status)
-        manifests = archives + sorted((attempt / "final_sampling").glob("run_*/seed_*/manifest.json"))
-        result = evaluate(manifests, output_dir=attempt / "diversity", abc_path=abc_path,
-                          k=protocol["mapping"]["k"], timeout_seconds=protocol["mapping"]["timeout_seconds"],
-                          permutations=protocol["mapping"]["curve_permutations"],
-                          milestone_interval=protocol["archive"]["emit_every_trajectories"])
-        status["mapping_complete"] = result["complete"]
-        status["complete"] = result["complete"]
-        if not result["complete"]:
-            raise RuntimeError("Mapping incomplete; resume the standalone evaluation")
+        if stage == "all":
+            status = resume_mapping(attempt, abc_path)
     except Exception as exc:
+        if "input_files" not in status:
+            status["sampling_complete"] = False
         status["error"] = str(exc)
         raise
     finally:
@@ -161,8 +196,12 @@ def resume_mapping(attempt: Path, abc_path: Path) -> dict:
     manifests = sorted((attempt / "train/pareto_archives").glob("run_*/*/manifest.json"))
     manifests += sorted((attempt / "final_sampling").glob("run_*/seed_*/manifest.json"))
     try:
+        if "identity" in status:
+            from src.campaign_workers import validate_inputs
+            validate_inputs(attempt, status)
         result = evaluate(manifests, output_dir=attempt / "diversity", abc_path=abc_path,
                           k=protocol["mapping"]["k"], timeout_seconds=protocol["mapping"]["timeout_seconds"],
+                          budgets=protocol["baseline"]["common"]["sample_budgets"],
                           permutations=protocol["mapping"]["curve_permutations"],
                           milestone_interval=protocol["archive"]["emit_every_trajectories"],
                           resume=(attempt / "diversity/identity.json").exists())
@@ -170,6 +209,9 @@ def resume_mapping(attempt: Path, abc_path: Path) -> dict:
         if not result["complete"]:
             raise RuntimeError("Mapping remains incomplete")
         status.pop("error", None)
+        if "identity" in status:
+            from src.campaign_workers import inventory
+            status["mapping_files"] = inventory(attempt, [attempt / "diversity"])
     except Exception as exc:
         status["mapping_complete"] = status["complete"] = False
         status["error"] = str(exc)
@@ -197,6 +239,7 @@ def sample_checkpoints(*, experiment: Path, circuit: Path, output_dir: Path,
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--protocol", type=Path, default=DEFAULT_PROTOCOL)
+    parser.add_argument("--smoke", action="store_true", help="Use fixed reduced budgets for validation only")
     subs = parser.add_subparsers(dest="command", required=True)
     subs.add_parser("validate")
     run = subs.add_parser("run-task")
@@ -204,7 +247,16 @@ def main() -> None:
     run.add_argument("--circuit", required=True)
     run.add_argument("--artifact-root", type=Path, required=True)
     run.add_argument("--abc-path", type=Path, required=True)
-    run.add_argument("--device", default="cpu")
+    run.add_argument("--device", choices=["cpu", "cuda"], default="cpu")
+    run.add_argument("--stage", choices=["all", "train-sample"], default="all")
+    method = subs.add_parser("run-method")
+    method.add_argument("--method", required=True)
+    method.add_argument("--stage", choices=["train-sample", "mapping"], required=True)
+    method.add_argument("--workers", type=int, default=2)
+    method.add_argument("--circuits", nargs="+")
+    method.add_argument("--artifact-root", type=Path, required=True)
+    method.add_argument("--abc-path", type=Path, required=True)
+    method.add_argument("--device", choices=["cpu", "cuda"], default="cuda")
     resume = subs.add_parser("resume-mapping")
     resume.add_argument("--attempt", type=Path, required=True)
     resume.add_argument("--abc-path", type=Path, required=True)
@@ -224,10 +276,18 @@ def main() -> None:
                            evaluation_seeds=args.evaluation_seeds, num_samples=args.num_samples, device=args.device)
         return
     protocol = load_protocol(args.protocol)
+    if args.smoke:
+        protocol = smoke_protocol(protocol)
     print(json.dumps(validate(protocol)))
+    if args.command == "run-method":
+        from src.campaign_workers import run_method
+        result = run_method(protocol, protocol_path=args.protocol.resolve(), method=args.method,
+                            stage=args.stage, workers=args.workers, circuits=args.circuits,
+                            artifact_root=args.artifact_root, abc_path=args.abc_path, device=args.device)
+        raise SystemExit(0 if result["complete"] else 1)
     if args.command == "run-task":
         print(run_task(protocol, method=args.method, circuit=args.circuit,
-                       artifact_root=args.artifact_root, abc_path=args.abc_path, device=args.device))
+                       artifact_root=args.artifact_root, abc_path=args.abc_path, device=args.device, stage=args.stage))
 
 
 if __name__ == "__main__":

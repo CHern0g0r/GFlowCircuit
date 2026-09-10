@@ -306,7 +306,13 @@ def main(cfg: DictConfig) -> None:
         f"Obs dim: {obs_dim}, num actions: {num_actions}, node dim: {node_dim}, "
         f"edge dim: {edge_dim}, available actions: {available_actions_msg}"
     )
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    requested_device = str(OmegaConf.select(cfg, "training_device") or "auto")
+    if requested_device not in {"auto", "cpu", "cuda"}:
+        raise ValueError(f"Invalid training_device: {requested_device}")
+    if requested_device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but unavailable")
+    device = torch.device(("cuda" if torch.cuda.is_available() else "cpu")
+                          if requested_device == "auto" else requested_device)
 
     reward_class = reward_class_factory(cfg.reward)
     mo_reward_cfg = OmegaConf.select(cfg, "mo_reward")

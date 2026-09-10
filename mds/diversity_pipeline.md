@@ -188,3 +188,99 @@ reuse counts, samples four endpoints, reloads saved AIG statistics, and checks
 AIG/LUT equivalence with `cec -n` (port order, because AIGER renames ports).
 It writes an example artifact tree and `summary.json`. An unavailable pyspiel
 exporter or ABC executable is a real test failure, not a mocked success.
+
+## CIAI: four method jobs and separate mapping
+
+The GPU campaign has four SLURM array tasks, one for each method in protocol order
+(REINFORCE, DRiLLS-A2C, PPO, GFlowNet). Each task supervises at most two circuit
+processes sharing one allocated GPU. Circuits remain in protocol order; training
+seeds remain sequential inside each circuit. GPU tasks stop after final sampling.
+The separately submitted CPU array maps up to two circuits per method without
+loading policies or initializing CUDA.
+
+| Script | Array | Resources per task | Time |
+|---|---|---|---|
+| `ciai_diversity_campaign.slurm` | `0-3%2` | 1 GPU, 8 CPUs, 32 GiB | 48h |
+| `ciai_diversity_mapping.slurm` | `0-3%3` | 8 CPUs, 32 GiB | 72h |
+
+Scripts live in `/Users/fedor.chernogorskii/workspace/local/scripts/projects/gflowcircuit/scr`.
+Use Conda `/home/fedor.chernogorskii/envs/ospiel` and ABC
+`/home/fedor.chernogorskii/heap/gflowcircuit/abc/abc`.
+
+After reviewing, committing, and pushing both repositories, run the updated
+preflight through `myhpc`. It includes the actual two-circuit supervisor, CUDA
+training/sampling and separate mapping. Its previous readiness result is stale
+after these code changes. These are explicit submissions, not automatic steps:
+
+```bash
+myhpc run ciai gflowcircuit /Users/fedor.chernogorskii/workspace/local/scripts/projects/gflowcircuit/scr/ciai_diversity_preflight.slurm
+# After preflight succeeds:
+myhpc run ciai gflowcircuit /Users/fedor.chernogorskii/workspace/local/scripts/projects/gflowcircuit/scr/ciai_diversity_campaign.slurm
+# After the GPU array ends (successful circuits can be mapped even if another failed):
+myhpc run ciai gflowcircuit /Users/fedor.chernogorskii/workspace/local/scripts/projects/gflowcircuit/scr/ciai_diversity_mapping.slurm
+```
+
+Do not use force synchronization without explicit overwrite authorization. The
+remote project tree is shared; do not change it while a campaign is running.
+Four GPU tasks use the current four-submitted-job allowance. Other GPU jobs can
+consume this allowance. The CPU mapping array has independent scheduler logs
+under `ciai-diversity-mapping-v1/log`; evaluation outputs stay beside their
+selected training attempts under `ciai-diversity-v1`.
+
+### Direct commands inside an allocation
+
+```bash
+python -m src.diversity_campaign validate
+python -m src.diversity_campaign run-method --method reinforce \
+  --stage train-sample --workers 2 --device cuda \
+  --artifact-root "$CAMPAIGN_ART" --abc-path "$ABC_PATH"
+python -m src.diversity_campaign run-method --method reinforce \
+  --stage mapping --workers 2 --device cuda \
+  --artifact-root "$CAMPAIGN_ART" --abc-path "$ABC_PATH"
+```
+
+`--device cuda` in the mapping command selects attempts originally trained on
+CUDA; it does not use a GPU. `--circuits C1355 C5315` selects a subset, scheduled
+in protocol order. Workers can be 1 or 2. `run-task --stage all` retains the
+single-circuit combined pipeline; `--stage train-sample` stops before mapping.
+`training_device=auto` retains legacy standalone training behavior; campaigns
+explicitly select `cpu` or `cuda` for both training and sampling.
+
+### Restart and failure behavior
+
+`methods/<method>/status.json` summarizes the latest invocation, selected
+attempts, log paths, states and exit codes. Timestamped invocation directories
+retain earlier summaries and worker logs. Attempt status separately records
+training, sampling and mapping completion; overall completion requires mapping.
+
+A nonblocking method lock prevents overlapping method supervisors across both
+stages. A failed circuit does not cancel other circuits. The method exits
+nonzero if any selected circuit failed or was interrupted. SIGTERM/SIGINT stops
+new work and terminates worker process groups, including training subprocesses.
+
+Resubmission reuses only matching, validated attempts: source/config/protocol,
+circuit, device and native binary identities must match. Checkpoints, manifests,
+AIGs, CSVs and completed evaluation outputs are verified against saved digests.
+Missing or corrupt claimed-complete inputs fail visibly. Interrupted training or
+sampling gets a fresh attempt; previous files remain. Mapping resumes its own
+validated cache. Old attempts without the new identity/inventory are not reused
+by method orchestration; legacy standalone mapping commands remain available.
+Each evaluation directory has a single writer. Never run manual mapping against
+an attempt concurrently with its method supervisor.
+
+### Reduced concurrent smoke
+
+Run on a compute allocation, using a fresh output directory:
+
+```bash
+python -m scr.campaign_smoke --device cuda --abc-path "$ABC_PATH" \
+  --output-dir "$SMOKE_ART"
+```
+
+This uses all four methods, C1355 and C5315 concurrently, one training seed,
+four terminal trajectories, one evaluation seed, and four final samples. It
+runs the same supervisor and stage commands as production, then repeats both
+stages to verify reuse, reloads AIGs, checks ABC equivalence, nested prefixes,
+and saved winner paths. `--device cpu` supports CPU validation; a successful
+CPU smoke does not certify the GPU environment. `--smoke` is an explicit
+CLI-only reduction; normal production protocol validation remains strict.
