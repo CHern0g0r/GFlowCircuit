@@ -427,17 +427,23 @@ def _canonicalize_blif(path: Path) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def map_to_lut6(
+def map_to_lut(
     *,
     abc_path: Path,
     aig_path: Path,
     lut_path: Path,
     timeout_seconds: float,
+    k: int = 6,
+    log_path: Path | None = None,
 ) -> tuple[int, int]:
+    if isinstance(k, bool) or int(k) != k or not 2 <= int(k) <= 32:
+        raise ValueError("ABC if LUT size k must be an integer in [2, 32]")
+    if timeout_seconds <= 0:
+        raise ValueError("Mapping timeout must be positive")
     lut_path.parent.mkdir(parents=True, exist_ok=True)
     command = (
         f"read {_abc_quote(aig_path)}; "
-        "strash; if -K 6; print_stats; "
+        f"strash; if -K {int(k)}; print_stats; "
         f"write_blif {_abc_quote(lut_path)}"
     )
     completed = subprocess.run(
@@ -448,6 +454,9 @@ def map_to_lut6(
         timeout=float(timeout_seconds),
     )
     output = completed.stdout + ("\n" + completed.stderr if completed.stderr else "")
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(command + "\n" + output)
     if completed.returncode != 0:
         raise RuntimeError(
             f"ABC failed with exit code {completed.returncode} while mapping {aig_path}:\n{output}"
@@ -459,6 +468,14 @@ def map_to_lut6(
     lut_size, lut_depth = parse_abc_lut_stats(output)
     _canonicalize_blif(lut_path)
     return lut_size, lut_depth
+
+
+
+def map_to_lut6(*, abc_path: Path, aig_path: Path, lut_path: Path,
+                timeout_seconds: float) -> tuple[int, int]:
+    """Compatibility entrypoint for the original fixed 6-LUT pipeline."""
+    return map_to_lut(abc_path=abc_path, aig_path=aig_path, lut_path=lut_path,
+                      timeout_seconds=timeout_seconds, k=6)
 
 
 def _resolve_abc(value: str) -> Path:

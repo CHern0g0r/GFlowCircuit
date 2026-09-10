@@ -1,0 +1,15 @@
+version: 1
+campaign: pareto-diversity-v1
+baseline_protocol: cfg/exp/baseline_evaluation/protocol.yaml
+gflownet_protocol: cfg/exp/gfn_checkpoint_evaluation/protocol.yaml
+methods: [reinforce, drills, ppo, gflownet_tb]
+archive:
+  enabled: true
+  emit_every_trajectories: 50
+mapping:
+  k: 6
+  timeout_seconds: 120
+  curve_permutations: 32
+martin:
+  artifact_base: /shared/home/fedor.chernogorskii/agent/art/gflowcircuit-diversity
+  job_name: gfc-pareto-diversity-v1

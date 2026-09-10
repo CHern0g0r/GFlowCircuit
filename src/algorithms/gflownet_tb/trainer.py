@@ -182,6 +182,7 @@ class TBGFlowNetTrainer:
         calibration_epsilon: float = 0.5,
         discovery_metrics_enabled: bool = True,
         discovery_emit_every_trajectories: int = 50,
+        archive_options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         initialization = str(log_z_initialization).lower()
         if initialization not in {"zero", "calibrated"}:
@@ -211,6 +212,7 @@ class TBGFlowNetTrainer:
             resyn2_baselines=self.resyn2_baselines,
             emit_every_trajectories=discovery_emit_every_trajectories,
             tensorboard_logger=self._tb,
+            archive_options=archive_options,
         )
 
         cached_trajectories: list[Any] = []
@@ -234,7 +236,7 @@ class TBGFlowNetTrainer:
                     epsilon_uniform=calibration_epsilon,
                 )
             for trajectory in cached_trajectories:
-                record_training_trajectory(discovery, trajectory)
+                record_training_trajectory(discovery, trajectory, origin="calibration")
             calibration_target = calibrated_log_z_target(self.policy, cached_trajectories)
             with torch.no_grad():
                 self.policy.log_z.fill_(calibration_target)

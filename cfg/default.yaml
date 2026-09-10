@@ -36,6 +36,8 @@ episodes: 800
 eval_every: 20
 train_ratio: 0.75
 seed: 0
+# Opt-in for new reproducible campaigns; legacy runs retain their RNG behavior.
+seed_training_rng: false
 learning_rate: 0.001
 policy_learning_rate: null
 value_learning_rate: null
@@ -70,6 +72,7 @@ logging:
 discovery_metrics:
   enabled: true
   emit_every_trajectories: 50
+  archive_enabled: false
 
 # Written after training; interpolated from fields above
 json_out: ${output_dir}/reinforce_report.json

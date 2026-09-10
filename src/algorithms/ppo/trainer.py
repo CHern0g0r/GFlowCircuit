@@ -92,6 +92,7 @@ class PPOTrainer:
         best_of_eval_rollouts: int,
         discovery_metrics_enabled: bool = True,
         discovery_emit_every_trajectories: int = 50,
+        archive_options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         optimizer = torch.optim.Adam(
             list(self.policy.parameters()) + list(self.value_network.parameters()),
@@ -104,6 +105,7 @@ class PPOTrainer:
             resyn2_baselines=self.resyn2_baselines,
             emit_every_trajectories=discovery_emit_every_trajectories,
             tensorboard_logger=self._tb,
+            archive_options=archive_options,
         )
 
         for ep in trange(1, int(episodes) + 1, desc="Training PPO"):
