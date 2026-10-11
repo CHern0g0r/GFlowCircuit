@@ -481,6 +481,8 @@ def sample_paired_evaluation_seed(
     evaluation_seed: int,
     device: torch.device,
     num_steps: int | None = None,
+    artifact_root: Path | None = None,
+    gflownet_batch_size: int | None = None,
 ) -> pd.DataFrame:
     """Sample every training run with one shared, explicit evaluation seed.
 
@@ -498,7 +500,9 @@ def sample_paired_evaluation_seed(
         evaluation_seed=evaluation_seed,
         device=device,
         num_steps=num_steps,
+        artifact_root=artifact_root,
         run_checkpoints=_discover_run_checkpoints(experiment_dir),
+        **({"gflownet_batch_size": gflownet_batch_size} if gflownet_batch_size is not None else {}),
     )
 
 
@@ -513,6 +517,7 @@ def sample_paired_evaluation_seed_from_paths(
     evaluation_seed: int,
     device: torch.device,
     num_steps: int | None = None,
+    artifact_root: Path | None = None,
     gflownet_batch_size: int | None = None,
     run_checkpoints: list[tuple[int, Path]] | None = None,
 ) -> pd.DataFrame:
@@ -542,7 +547,19 @@ def sample_paired_evaluation_seed_from_paths(
             pcn_sampling_mode="target",
             pcn_zero_variance_jitter=0.05,
             gflownet_batch_size=gflownet_batch_size,
+            **({"include_actions": True} if artifact_root is not None else {}),
         )
+        if artifact_root is not None:
+            from src.circuit_artifacts import save_final_samples
+            save_final_samples(
+                rows=sampled, root=Path(artifact_root) / f"run_{run_id}" / f"seed_{evaluation_seed}",
+                circuit=circuit_path, num_steps=resolved_num_steps,
+                metadata={"method": method, "circuit": str(circuit_path.resolve()),
+                          "run_id": int(run_id), "training_seed": training_seed,
+                          "evaluation_seed": int(evaluation_seed),
+                          "gflownet_batch_size": gflownet_batch_size},
+                checkpoint=checkpoint_path, config_path=config_path,
+            )
         for sample_id, sample_row in enumerate(tqdm(
             sampled,
             desc=f"Sampling {circuit_path.name} for run {run_id}, evaluation seed {evaluation_seed}",

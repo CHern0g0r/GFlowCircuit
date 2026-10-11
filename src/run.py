@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import hydra
+import numpy as np
 import torch
 from hydra.utils import to_absolute_path
 from omegaconf import DictConfig, OmegaConf
@@ -305,7 +306,13 @@ def main(cfg: DictConfig) -> None:
         f"Obs dim: {obs_dim}, num actions: {num_actions}, node dim: {node_dim}, "
         f"edge dim: {edge_dim}, available actions: {available_actions_msg}"
     )
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    requested_device = str(OmegaConf.select(cfg, "training_device") or "auto")
+    if requested_device not in {"auto", "cpu", "cuda"}:
+        raise ValueError(f"Invalid training_device: {requested_device}")
+    if requested_device == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but unavailable")
+    device = torch.device(("cuda" if torch.cuda.is_available() else "cpu")
+                          if requested_device == "auto" else requested_device)
 
     reward_class = reward_class_factory(cfg.reward)
     mo_reward_cfg = OmegaConf.select(cfg, "mo_reward")
@@ -353,10 +360,32 @@ def main(cfg: DictConfig) -> None:
         baseline_scale=baseline_scale,
     )
 
+    archive_provenance = None
+    if bool(OmegaConf.select(cfg, "discovery_metrics.archive_enabled") or False):
+        from src.circuit_artifacts import implementation_provenance
+        archive_provenance = implementation_provenance()
     runs: list[dict] = []
     for run_idx in range(num_runs):
         print("Starting run", run_idx)
         run_seed = int(cfg.seed + run_idx)
+        if bool(OmegaConf.select(cfg, "seed_training_rng") or False):
+            np.random.seed(run_seed)
+            torch.manual_seed(run_seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(run_seed)
+        archive_options = None
+        if bool(OmegaConf.select(cfg, "discovery_metrics.archive_enabled") or False):
+            if algorithm_name not in {"reinforce", "drills_a2c", "ppo", "gflownet_tb"}:
+                raise ValueError(f"Persistent archives unsupported for {algorithm_name}")
+            archive_options = {
+                "root": str(output_dir / "pareto_archives" / f"run_{run_idx}"),
+                "num_steps": int(cfg.num_steps),
+                "metadata": {"method": algorithm_name, "run_id": run_idx,
+                             "training_seed": run_seed, "attempt": str(output_dir.resolve()),
+                             "implementation": archive_provenance,
+                             "config": OmegaConf.to_container(cfg, resolve=True)},
+            }
+
         if algorithm_name == "gflownet_tb":
             policy = _build_tb_policy(
                 cfg,
@@ -456,6 +485,7 @@ def main(cfg: DictConfig) -> None:
                 calibration_epsilon=tb_calibration_epsilon,
                 discovery_metrics_enabled=discovery_enabled,
                 discovery_emit_every_trajectories=discovery_emit_every,
+                archive_options=archive_options,
             )
             final_eval = trainer.evaluate(
                 num_steps=int(cfg.num_steps),
@@ -618,6 +648,7 @@ def main(cfg: DictConfig) -> None:
                 best_of_eval_rollouts=best_of_rollouts,
                 discovery_metrics_enabled=discovery_enabled,
                 discovery_emit_every_trajectories=discovery_emit_every,
+                archive_options=archive_options,
             )
             final_eval = trainer.evaluate(num_steps=int(cfg.num_steps), best_of_rollouts=best_of_rollouts)
             ckpt_path = _save_run_checkpoint(
@@ -698,6 +729,7 @@ def main(cfg: DictConfig) -> None:
                 best_of_eval_rollouts=best_of_rollouts,
                 discovery_metrics_enabled=discovery_enabled,
                 discovery_emit_every_trajectories=discovery_emit_every,
+                archive_options=archive_options,
             )
             final_eval = trainer.evaluate(num_steps=int(cfg.num_steps), best_of_rollouts=best_of_rollouts)
             ckpt_path = _save_run_checkpoint(
@@ -761,6 +793,7 @@ def main(cfg: DictConfig) -> None:
                 normalize_returns=normalize_returns,
                 discovery_metrics_enabled=discovery_enabled,
                 discovery_emit_every_trajectories=discovery_emit_every,
+                archive_options=archive_options,
             )
 
             final_eval = trainer.evaluate(num_steps=int(cfg.num_steps), best_of_rollouts=best_of_rollouts)

@@ -127,6 +127,7 @@ class TrainingDiscoveryTracker:
         initial_metrics: Mapping[str, tuple[int, int]],
         emit_every_trajectories: int = 50,
         tensorboard_logger: Any | None = None,
+        archive_options: Mapping[str, Any] | None = None,
     ) -> None:
         interval = int(emit_every_trajectories)
         if interval <= 0:
@@ -143,6 +144,18 @@ class TrainingDiscoveryTracker:
             )
             for circuit, metrics in initial_metrics.items()
         }
+        if archive_options is not None:
+            from src.pareto_archive import PersistentCircuitArchive
+            self.archives = {
+                circuit: PersistentCircuitArchive(
+                    circuit=circuit, initial_size=metrics[0], initial_depth=metrics[1],
+                    root=Path(archive_options["root"]) / f"{idx}_{Path(circuit).stem}",
+                    metadata=dict(archive_options.get("metadata", {})),
+                    num_steps=int(archive_options["num_steps"]),
+                    **({"exporter": archive_options["exporter"]} if "exporter" in archive_options else {}),
+                ) for idx, (circuit, metrics) in enumerate(initial_metrics.items())
+            }
+        self.persistent = archive_options is not None
         self._labels = {
             circuit: f"{idx}_{Path(circuit).stem}"
             for idx, circuit in enumerate(self.archives)
@@ -160,6 +173,8 @@ class TrainingDiscoveryTracker:
         initial_depth: int,
         final_size: int,
         final_depth: int,
+        actions: list[int] | None = None,
+        origin: str = "training",
     ) -> bool:
         self._ensure_active()
         archive = self._archive(circuit)
@@ -168,6 +183,7 @@ class TrainingDiscoveryTracker:
             initial_depth=initial_depth,
             final_size=final_size,
             final_depth=final_depth,
+            **({"actions": actions, "origin": origin} if self.persistent else {}),
         )
         self._capture_milestone(archive)
         return inserted
@@ -181,6 +197,8 @@ class TrainingDiscoveryTracker:
     def finalize(self) -> dict[str, list[dict[str, Any]]]:
         if not self._finalized:
             for archive in self.archives.values():
+                if self.persistent:
+                    archive.finalize()
                 self._capture(archive, is_final=True)
             counts = {archive.attempted_trajectories for archive in self.archives.values()}
             if len(counts) == 1:
@@ -238,13 +256,15 @@ class TrainingDiscoveryTracker:
             self._metric_rows.append(row)
             if self._tb is not None:
                 label = self._labels[archive.circuit]
-                self._tb.add_scalars(
-                    count,
-                    {
-                        f"discovery/{label}/hypervolume": float(row["hypervolume"]),
-                        f"discovery/{label}/nondominated_count": float(row["nondominated_count"]),
-                    },
-                )
+                values = {
+                    f"discovery/{label}/hypervolume": float(row["hypervolume"]),
+                    f"discovery/{label}/nondominated_count": float(row["nondominated_count"]),
+                }
+                if self.persistent:
+                    values.update({f"discovery/{label}/{key}": float(row[key]) for key in (
+                        "historical_artifact_count", "historical_coordinate_count",
+                        "active_generated_artifact_count", "admission_count", "repeat_count")})
+                self._tb.add_scalars(count, values)
         self._capture_aggregate(count)
 
     def _capture_aggregate(self, count: int) -> None:
@@ -312,8 +332,11 @@ def build_training_discovery_tracker(
     resyn2_baselines: Mapping[str, Mapping[str, Any]],
     emit_every_trajectories: int,
     tensorboard_logger: Any | None,
+    archive_options: Mapping[str, Any] | None = None,
 ) -> TrainingDiscoveryTracker | None:
     if not enabled:
+        if archive_options is not None:
+            raise ValueError("Persistent archives require discovery tracking")
         return None
     return TrainingDiscoveryTracker(
         initial_metrics=initial_metrics_from_resyn2_cache(
@@ -322,6 +345,7 @@ def build_training_discovery_tracker(
         ),
         emit_every_trajectories=emit_every_trajectories,
         tensorboard_logger=tensorboard_logger,
+        archive_options=archive_options,
     )
 
 
@@ -338,6 +362,7 @@ def record_training_trajectory(
     trajectory: Any,
     *,
     circuit: str | None = None,
+    origin: str = "training",
 ) -> None:
     """Record a sampler result represented as either an object or a mapping."""
     if tracker is None:
@@ -361,12 +386,27 @@ def record_training_trajectory(
         tracker.record_failure(circuit=resolved_circuit)
         return
 
+    actions = None
+    if tracker.persistent:
+        if isinstance(trajectory, Mapping):
+            if not trajectory.get("terminal", True):
+                raise ValueError("Discovery requires a terminal trajectory")
+            actions = [int(a) for a in field("actions_applied")]
+        else:
+            steps = getattr(trajectory, "steps", getattr(trajectory, "transitions", None))
+            if steps is None:
+                raise ValueError("Trajectory has no action sequence")
+            if steps and hasattr(steps[-1], "done") and not steps[-1].done:
+                raise ValueError("Discovery requires a terminal trajectory")
+            actions = [int(step.action) for step in steps]
     tracker.record_terminal(
         circuit=resolved_circuit,
         initial_size=initial_size,
         initial_depth=initial_depth,
         final_size=final_size,
         final_depth=final_depth,
+        actions=actions,
+        origin=origin,
     )
 
 
@@ -411,6 +451,11 @@ def write_discovery_artifacts(
         }
         front_rows.extend({**metadata, **row} for row in run.get("discovery_front", []))
         metric_rows.extend({**metadata, **row} for row in run.get("discovery_metrics", []))
+
+    if any("historical_artifact_count" in row for row in metric_rows):
+        metric_fields.extend(["historical_artifact_count", "historical_coordinate_count",
+                              "active_generated_artifact_count", "admission_count", "repeat_count",
+                              "export_seconds", "artifact_bytes"])
 
     if not front_rows and not metric_rows:
         return {}

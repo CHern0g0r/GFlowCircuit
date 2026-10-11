@@ -73,6 +73,7 @@ class ReinforceTrainer:
         normalize_returns: bool = False,
         discovery_metrics_enabled: bool = True,
         discovery_emit_every_trajectories: int = 50,
+        archive_options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         baseline_ema = torch.tensor(0.0, device=self.device)
         history: list[dict[str, Any]] = []
@@ -82,6 +83,7 @@ class ReinforceTrainer:
             resyn2_baselines=self.resyn2_baselines,
             emit_every_trajectories=discovery_emit_every_trajectories,
             tensorboard_logger=self._tb,
+            archive_options=archive_options,
         )
 
         policy_optimizer = torch.optim.Adam(self.policy.parameters(), lr=float(policy_learning_rate))
